@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1a22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Ranking B3</title>
+<style>
+/* Layout: coluna única de leitura rápida no celular; cenário no topo, lista de cartões que se abrem. */
+:root {
+  --bg: #f3f5f6;
+  --surface: #ffffff;
+  --surface2: #e9edf0;
+  --ink: #12202a;
+  --ink2: #55646f;
+  --line: #d3dade;
+  --accent: #0a6c74;
+  --good: #14744a;   --good-bg: #dcf2e6;
+  --ok: #53741a;     --ok-bg: #eaf3d4;
+  --wait: #8f6200;   --wait-bg: #faedc9;
+  --bad: #a13838;    --bad-bg: #f5dfdf;
+  --c-close: #12202a;
+  --c-e50: #0a6c74;
+  --c-e200: #c2561f;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c141a;
+    --surface: #131f28;
+    --surface2: #1b2a35;
+    --ink: #e5edf2;
+    --ink2: #93a7b5;
+    --line: #243541;
+    --accent: #4cc3cb;
+    --good: #5fd49b;   --good-bg: #123828;
+    --ok: #a5cf5c;     --ok-bg: #263614;
+    --wait: #e7b64a;   --wait-bg: #3a2d0e;
+    --bad: #ee8585;    --bad-bg: #3d1c1c;
+    --c-close: #e5edf2;
+    --c-e50: #4cc3cb;
+    --c-e200: #f0925a;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.45 var(--sans);
+  padding-block: max(14px, env(safe-area-inset-top, 0px)) max(28px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(14px, env(safe-area-inset-left, 0px));
+  padding-right: max(14px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 760px; margin: 0 auto; display: grid; gap: 14px; }
+.num, .tick { font-variant-numeric: tabular-nums; }
+
+/* Cabeçalho */
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 1.45rem; letter-spacing: -0.01em; }
+.stamp { color: var(--ink2); font-size: 0.82rem; }
+
+/* Cenário */
+.regime { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.regime-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.regime-name { font-size: 1.15rem; font-weight: 700; letter-spacing: 0.01em; }
+.regime-meta { color: var(--ink2); font-size: 0.84rem; margin-top: 2px; }
+.pill {
+  display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.74rem;
+  font-weight: 650; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap;
+}
+.t-good { color: var(--good); background: var(--good-bg); }
+.t-ok   { color: var(--ok);   background: var(--ok-bg); }
+.t-wait { color: var(--wait); background: var(--wait-bg); }
+.t-bad  { color: var(--bad);  background: var(--bad-bg); }
+.regime details { margin-top: 8px; }
+summary { cursor: pointer; }
+.regime summary { color: var(--accent); font-size: 0.86rem; font-weight: 600; }
+.regime ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 3px; font-size: 0.86rem; }
+.regime li { display: flex; gap: 8px; }
+.regime li b { font-family: var(--mono); min-width: 2ch; }
+.pos { color: var(--good); } .neg { color: var(--bad); } .zero { color: var(--ink2); }
+
+/* Controles */
+.controls { display: grid; gap: 8px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+input[type=search], select {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; min-height: 40px;
+}
+input[type=search] { flex: 1 1 140px; min-width: 0; }
+select { flex: 1 1 150px; min-width: 0; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  font: inherit; font-size: 0.86rem; color: var(--ink2); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px; min-height: 36px; cursor: pointer;
+}
+.chip[aria-pressed=true] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.count { color: var(--ink2); font-size: 0.82rem; }
+
+/* Cartões */
+.list { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.card > summary {
+  list-style: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px;
+  padding: 11px 14px; align-items: center;
+}
+.card > summary::-webkit-details-marker { display: none; }
+.tick { font-family: var(--mono); font-weight: 700; font-size: 1.05rem; letter-spacing: 0.02em; }
+.sub { color: var(--ink2); font-size: 0.82rem; min-width: 0; overflow-wrap: anywhere; }
+.score { grid-row: 1 / span 2; grid-column: 2; text-align: right; }
+.score b { display: block; font-size: 1.55rem; line-height: 1.05; font-weight: 700; }
+.bar { width: 64px; height: 5px; border-radius: 3px; background: var(--surface2); margin: 5px 0 0 auto; overflow: hidden; }
+.bar i { display: block; height: 100%; background: currentColor; }
+.head2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.detail { border-top: 1px solid var(--line); padding: 12px 14px 14px; display: grid; gap: 14px; }
+.triple { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { background: var(--surface2); border-radius: 8px; padding: 8px 10px; }
+.stat small { display: block; color: var(--ink2); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat b { font-size: 1.15rem; }
+h3 { margin: 0 0 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink2); }
+dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 6px 14px; }
+dl div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dashed var(--line); padding-bottom: 3px; }
+dt { color: var(--ink2); } dd { margin: 0; font-weight: 600; white-space: nowrap; }
+
+.chart { width: 100%; height: auto; display: block; }
+.chart text { fill: var(--ink2); font: 10px var(--sans); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.78rem; color: var(--ink2); margin-top: 4px; }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+
+.why summary { color: var(--accent); font-size: 0.86rem; font-weight: 600; }
+.why ul { margin: 8px 0 0; padding-left: 18px; font-size: 0.86rem; color: var(--ink); }
+.why h4 { margin: 10px 0 0; font-size: 0.78rem; color: var(--ink2); text-transform: uppercase; letter-spacing: 0.05em; }
+
+.msg { background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 18px 16px; color: var(--ink2); }
+footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1px solid var(--line); padding-top: 12px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .bar i { transition: width .25s ease; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Ranking B3</h1>
+    <span class="stamp" id="stamp"></span>
+  </header>
+
+  <section class="regime" id="regime" hidden></section>
+
+  <section class="controls" id="controls" hidden>
+    <div class="row">
+      <input type="search" id="q" placeholder="Buscar ticker" autocomplete="off" autocapitalize="characters" aria-label="Buscar ticker, por exemplo PETR4">
+      <select id="ordem" aria-label="Ordenar por">
+        <option value="score">Score final</option>
+        <option value="score_tec">Técnica</option>
+        <option value="score_val">Valor</option>
+        <option value="dy">Dividendos</option>
+        <option value="pl">Menor P/L</option>
+      </select>
+    </div>
+    <div class="chips" id="chips" role="group" aria-label="Filtrar por sinal"></div>
+    <div class="count" id="count" aria-live="polite"></div>
+  </section>
+
+  <ul class="list" id="lista"></ul>
+  <div class="msg" id="msg">Carregando ranking…</div>
+
+  <footer>
+    Triagem automática por regras (técnica, valor e cenário de mercado). Não é recomendação de
+    investimento: confira os fundamentos e o seu perfil antes de qualquer operação. Preços e
+    fundamentos vêm de fontes públicas (Yahoo Finance, Fundamentus, Banco Central) e podem ter atraso ou erros.
+  </footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var SINAIS = {
+    "ENTRADA EXCELENTE": { tom: "good", rotulo: "Entrada excelente" },
+    "ENTRADA FORTE": { tom: "good", rotulo: "Entrada forte" },
+    "ENTRADA INTERESSANTE": { tom: "ok", rotulo: "Entrada interessante" },
+    "AGUARDAR CONFIRMAÇÃO": { tom: "wait", rotulo: "Aguardar" },
+    "EVITAR": { tom: "bad", rotulo: "Evitar" }
+  };
+  var REGIMES = {
+    "RISK-ON": { tom: "good", texto: "Mercado favorável" },
+    "NEUTRO": { tom: "ok", texto: "Mercado neutro" },
+    "CAUTELA": { tom: "wait", texto: "Mercado em cautela" },
+    "RISK-OFF": { tom: "bad", texto: "Mercado defensivo" }
+  };
+  var FILTROS = [
+    { id: "todos", rotulo: "Todos", ok: function () { return true; } },
+    { id: "entrada", rotulo: "Entrada", ok: function (a) { return a.sinal.indexOf("ENTRADA") === 0; } },
+    { id: "aguardar", rotulo: "Aguardar", ok: function (a) { return a.sinal.indexOf("AGUARDAR") === 0; } },
+    { id: "evitar", rotulo: "Evitar", ok: function (a) { return a.sinal === "EVITAR"; } }
+  ];
+
+  var estado = { dados: null, filtro: "todos", ordem: "score", busca: "" };
+  var $ = function (id) { return document.getElementById(id); };
+
+  function h(tag, attrs, filhos) {
+    var el = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (k === "class") el.className = attrs[k];
+      else if (k === "text") el.textContent = attrs[k];
+      else el.setAttribute(k, attrs[k]);
+    });
+    (filhos || []).forEach(function (f) {
+      if (f == null) return;
+      el.appendChild(typeof f === "string" ? document.createTextNode(f) : f);
+    });
+    return el;
+  }
+
+  function ok(v) { return v !== null && v !== undefined && !isNaN(v); }
+  function fmt(v, casas, sufixo) {
+    if (!ok(v)) return "—";
+    return Number(v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas }) + (sufixo || "");
+  }
+  function sinalFmt(v, casas) {
+    if (!ok(v)) return "—";
+    return (v > 0 ? "+" : "") + fmt(v, casas);
+  }
+  function cap(s) {
+    if (!s) return "—";
+    s = String(s).toLowerCase();
+    return (s.charAt(0).toUpperCase() + s.slice(1)).replace(/ema(\d+)/g, "EMA$1");
+  }
+  function dataBR(iso) {
+    if (!iso) return "—";
+    var p = iso.slice(0, 10).split("-");
+    return p[2] + "/" + p[1] + "/" + p[0];
+  }
+
+  /* ---------- cenário ---------- */
+  function renderRegime(r) {
+    var box = $("regime");
+    box.textContent = "";
+    if (!r) {
+      box.appendChild(h("div", { class: "regime-name", text: "Cenário indisponível" }));
+      box.appendChild(h("div", { class: "regime-meta", text: "Nesta atualização o ranking usou só a análise técnica." }));
+      box.hidden = false;
+      return;
+    }
+    var info = REGIMES[r.nome] || { tom: "ok", texto: r.nome };
+    var pesos = r.pesos || {};
+    box.appendChild(h("div", { class: "regime-top" }, [
+      h("div", null, [
+        h("div", { class: "regime-name", text: info.texto }),
+        h("div", { class: "regime-meta num", text:
+          "Pontuação " + sinalFmt(r.pontos, 0) + " · peso técnica " + Math.round((pesos.tec || 0) * 100) +
+          "% / valor " + Math.round((pesos.val || 0) * 100) + "%" })
+      ]),
+      h("span", { class: "pill t-" + info.tom, text: r.nome })
+    ]));
+    var lis = (r.detalhes || []).map(function (d) {
+      var m = /^([+-]\d+)\s+(.*)$/.exec(d);
+      var sinal = m ? m[1] : "";
+      var cls = sinal.charAt(0) === "+" && sinal !== "+0" ? "pos" : (sinal.charAt(0) === "-" ? "neg" : "zero");
+      return h("li", null, [h("b", { class: cls, text: sinal }), h("span", { text: m ? m[2] : d })]);
+    });
+    box.appendChild(h("details", null, [h("summary", { text: "O que compõe o cenário" }), h("ul", null, lis)]));
+    box.hidden = false;
+  }
+
+  /* ---------- gráfico (SVG) ---------- */
+  function renderGrafico(g) {
+    if (!g || !g.close || g.close.length < 2) return h("div", { class: "sub", text: "Gráfico indisponível." });
+    var W = 340, H = 150, ml = 6, mr = 44, mt = 8, mb = 18;
+    var vals = [];
+    [g.close, g.ema50, g.ema200].forEach(function (s) { s.forEach(function (v) { if (ok(v)) vals.push(v); }); });
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad;
+    var n = g.close.length;
+    function x(i) { return ml + (i / (n - 1)) * (W - ml - mr); }
+    function y(v) { return mt + (1 - (v - lo) / (hi - lo)) * (H - mt - mb); }
+    function caminho(s) {
+      var d = "", pen = false;
+      s.forEach(function (v, i) {
+        if (!ok(v)) { pen = false; return; }
+        d += (pen ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1);
+        pen = true;
+      });
+      return d;
+    }
+    var NS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("class", "chart");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Preço, EMA50 e EMA200 dos últimos " + n + " pregões");
+    function el(tag, attrs, txt) {
+      var e = document.createElementNS(NS, tag);
+      Object.keys(attrs).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+      if (txt !== undefined) e.textContent = txt;
+      svg.appendChild(e);
+    }
+    for (var t = 0; t <= 3; t++) {
+      var v = lo + (hi - lo) * (t / 3), yy = y(v);
+      el("line", { x1: ml, x2: W - mr, y1: yy, y2: yy, stroke: "var(--line)", "stroke-width": 1, "stroke-dasharray": "2 3" });
+      el("text", { x: W - mr + 4, y: yy + 3 }, fmt(v, 2));
+    }
+    el("path", { d: caminho(g.ema200), fill: "none", stroke: "var(--c-e200)", "stroke-width": 1.6 });
+    el("path", { d: caminho(g.ema50), fill: "none", stroke: "var(--c-e50)", "stroke-width": 1.6 });
+    el("path", { d: caminho(g.close), fill: "none", stroke: "var(--c-close)", "stroke-width": 1.8, "stroke-linejoin": "round" });
+    var ult = g.close[n - 1];
+    if (ok(ult)) el("circle", { cx: x(n - 1), cy: y(ult), r: 3, fill: "var(--c-close)" });
+    el("text", { x: ml, y: H - 4 }, dataBR(g.datas[0]));
+    el("text", { x: W - mr, y: H - 4, "text-anchor": "end" }, dataBR(g.datas[n - 1]));
+    var wrap = h("div", null, [svg, h("div", { class: "legend" }, [
+      h("span", null, [h("i", { style: "background:var(--c-close)" }), "Preço"]),
+      h("span", null, [h("i", { style: "background:var(--c-e50)" }), "EMA50"]),
+      h("span", null, [h("i", { style: "background:var(--c-e200)" }), "EMA200"])
+    ])]);
+    return wrap;
+  }
+
+  /* ---------- cartão ---------- */
+  function par(rotulo, valor) { return h("div", null, [h("dt", { text: rotulo }), h("dd", { class: "num", text: valor })]); }
+
+  function lista(titulo, itens) {
+    if (!itens || !itens.length) return null;
+    return h("div", null, [h("h4", { text: titulo }), h("ul", null, itens.map(function (t) { return h("li", { text: t }); }))]);
+  }
+
+  function corpo(a) {
+    return h("div", { class: "detail" }, [
+      h("div", { class: "triple" }, [
+        h("div", { class: "stat" }, [h("small", { text: "Técnica" }), h("b", { class: "num", text: fmt(a.score_tec, 0) })]),
+        h("div", { class: "stat" }, [h("small", { text: "Valor" }), h("b", { class: "num", text: fmt(a.score_val, 0) })]),
+        h("div", { class: "stat" }, [h("small", { text: "Cenário" }), h("b", { class: "num", text: sinalFmt(a.ajuste, 0) })])
+      ]),
+      renderGrafico(a.grafico),
+      h("div", null, [h("h3", { text: "Técnica" }), h("dl", null, [
+        par("RSI", fmt(a.rsi, 1) + (a.rsi_status ? " · " + a.rsi_status.toLowerCase() : "")),
+        par("MACD", (a.macd_status || "—").toLowerCase()),
+        par("ADX", fmt(a.adx, 1)),
+        par("Volume rel.", fmt(a.vol_rel, 2, "x")),
+        par("Dist. EMA50", fmt(a.dist_ema50, 1, "%")),
+        par("Até resistência", fmt(a.dist_res, 1, "%"))
+      ])]),
+      h("div", null, [h("h3", { text: "Fundamentos e risco" }), h("dl", null, [
+        par("P/L", fmt(a.pl, 1)),
+        par("P/VP", fmt(a.pvp, 2)),
+        par("EV/EBITDA", fmt(a.ev_ebitda, 1)),
+        par("ROE", fmt(a.roe, 1, "%")),
+        par("Margem líq.", fmt(a.mrg_liq, 1, "%")),
+        par("Dív.líq./PL", fmt(a.div_patrim, 2)),
+        par("Div. yield", fmt(a.dy, 1, "%")),
+        par("Cresc. rec. 5a", fmt(a.cresc_rec, 1, "%")),
+        par("Beta", fmt(a.beta, 2)),
+        par("Força rel. 60d", sinalFmt(a.forca_rel, 1) + (ok(a.forca_rel) ? " p.p." : ""))
+      ])]),
+      h("details", { class: "why" }, [
+        h("summary", { text: "Por que esse score" }),
+        lista("Técnica", a.motivos),
+        lista("Valor", a.motivos_val),
+        lista("Cenário", a.motivos_cen)
+      ])
+    ]);
+  }
+
+  function cartao(a) {
+    var s = SINAIS[a.sinal] || { tom: "bad", rotulo: a.sinal };
+    var det = h("details", { class: "card" });
+    var sum = h("summary", null, [
+      h("div", { class: "head2" }, [
+        h("span", { class: "tick", text: a.acao }),
+        h("span", { class: "pill t-" + s.tom, text: s.rotulo })
+      ]),
+      h("div", { class: "sub num", text:
+        "R$ " + fmt(a.preco, 2) + " · " + cap(a.setup) + " · tendência " + (a.tendencia || "—").toLowerCase() }),
+      h("div", { class: "score t-" + s.tom, style: "background:none" }, [
+        h("b", { class: "num", text: fmt(a.score, 0) }),
+        h("div", { class: "bar" }, [h("i", { style: "width:" + Math.max(0, Math.min(100, a.score || 0)) + "%" })])
+      ])
+    ]);
+    det.appendChild(sum);
+    var montado = false;
+    det.addEventListener("toggle", function () {
+      if (det.open && !montado) { det.appendChild(corpo(a)); montado = true; }
+    });
+    return h("li", null, [det]);
+  }
+
+  /* ---------- lista ---------- */
+  function visiveis() {
+    var f = FILTROS.filter(function (x) { return x.id === estado.filtro; })[0];
+    var q = estado.busca.trim().toUpperCase();
+    var lista = estado.dados.acoes.filter(function (a) {
+      return f.ok(a) && (!q || a.acao.indexOf(q) !== -1);
+    });
+    var k = estado.ordem;
+    lista.sort(function (a, b) {
+      var va = a[k], vb = b[k];
+      var na = !ok(va), nb = !ok(vb);
+      if (na && nb) return 0;
+      if (na) return 1;
+      if (nb) return -1;
+      if (k === "pl") {                       // menor P/L primeiro, ignorando prejuízo
+        var pa = va > 0 ? va : Infinity, pb = vb > 0 ? vb : Infinity;
+        return pa - pb;
+      }
+      return vb - va;
+    });
+    return lista;
+  }
+
+  function renderLista() {
+    var ul = $("lista");
+    ul.textContent = "";
+    var itens = visiveis();
+    itens.forEach(function (a) { ul.appendChild(cartao(a)); });
+    $("count").textContent = itens.length + " de " + estado.dados.acoes.length + " ações";
+    var msg = $("msg");
+    msg.hidden = itens.length > 0;
+    if (!itens.length) msg.textContent = "Nenhuma ação com esse filtro.";
+  }
+
+  function renderChips() {
+    var box = $("chips");
+    box.textContent = "";
+    FILTROS.forEach(function (f) {
+      var n = estado.dados.acoes.filter(f.ok).length;
+      var b = h("button", { class: "chip", type: "button", "aria-pressed": String(estado.filtro === f.id), text: f.rotulo + " (" + n + ")" });
+      b.addEventListener("click", function () { estado.filtro = f.id; renderChips(); renderLista(); });
+      box.appendChild(b);
+    });
+  }
+
+  function iniciar(d) {
+    estado.dados = d;
+    $("stamp").textContent = "Pregão de " + dataBR(d.data_pregao);
+    $("stamp").title = "Gerado em " + d.gerado_em;
+    renderRegime(d.regime);
+    $("controls").hidden = false;
+    renderChips();
+    renderLista();
+    $("q").addEventListener("input", function (e) { estado.busca = e.target.value; renderLista(); });
+    $("ordem").addEventListener("change", function (e) { estado.ordem = e.target.value; renderLista(); });
+  }
+
+  function aviso(texto) {
+    var m = $("msg");
+    m.hidden = false;
+    m.textContent = texto;
+  }
+
+  fetch("data.json?v=" + Date.now(), { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (d) {
+      if (!d || d.vazio || !d.acoes || !d.acoes.length) {
+        aviso("Ainda não há dados. Rode o fluxo “Atualizar ranking” na aba Actions do GitHub (ou python gerar_dados.py no seu computador) e recarregue esta página.");
+        return;
+      }
+      iniciar(d);
+    })
+    .catch(function (e) {
+      aviso("Não foi possível carregar os dados (" + e.message + "). Se estiver abrindo o arquivo direto do computador, use: python -m http.server 8000 --directory docs");
+    });
+})();
+</script>
+</body>
+</html>
