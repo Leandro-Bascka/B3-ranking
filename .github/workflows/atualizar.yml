@@ -1,0 +1,44 @@
+
+name: Atualizar ranking
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 21 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Baixar arquivos do projeto
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Instalar bibliotecas
+        run: python -m pip install -r requirements.txt
+
+      - name: Gerar ranking atualizado
+        run: python gerar_dados.py
+
+      - name: Salvar dados atualizados no GitHub
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data.json docs/historico/
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteração nos dados."
+          else
+            git commit -m "Atualização automática do ranking B3"
+            git push
+          fi
