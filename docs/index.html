@@ -23,6 +23,7 @@
   --c-close: #12202a;
   --c-e50: #0a6c74;
   --c-e200: #c2561f;
+  --c-fib: #6b46a8;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   color-scheme: light;
@@ -43,6 +44,7 @@
     --c-close: #e5edf2;
     --c-e50: #4cc3cb;
     --c-e200: #f0925a;
+    --c-fib: #b9a0ee;
     color-scheme: dark;
   }
 }
@@ -141,6 +143,27 @@ dt { color: var(--ink2); } dd { margin: 0; font-weight: 600; white-space: nowrap
 .why h4 { margin: 10px 0 0; font-size: 0.78rem; color: var(--ink2); text-transform: uppercase; letter-spacing: 0.05em; }
 
 .msg { background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 18px 16px; color: var(--ink2); }
+[hidden] { display: none !important; }
+.t-op { color: var(--bg); background: var(--accent); }
+.t-new { color: var(--wait); background: var(--wait-bg); }
+.plan { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; }
+.plan .stat b { font-size: 1.05rem; white-space: nowrap; }
+.note { color: var(--ink2); font-size: 0.8rem; margin: 0; }
+.stat .note { margin-top: 1px; }
+.hist { margin: 8px 0 0; font-size: 0.86rem; }
+.wide { grid-column: 1 / -1; }
+.chart .lbl { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; font-size: 9px; font-weight: 600; }
+.t-cit { color: var(--accent); background: var(--surface2); }
+.mc { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; }
+.mc > summary { font-weight: 650; }
+.mc-status { color: var(--ink2); font-weight: 400; font-size: 0.84rem; }
+.mc-body { display: grid; gap: 8px; margin-top: 10px; }
+.mc-body p { margin: 0; }
+.mc textarea {
+  font: inherit; font-size: 0.86rem; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
+  width: 100%; min-height: 140px; resize: vertical;
+}
 footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1px solid var(--line); padding-top: 12px; }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -157,11 +180,26 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
 
   <section class="regime" id="regime" hidden></section>
 
+  <details class="mc" id="mc" hidden>
+    <summary>Morning Call <span class="mc-status" id="mcStatus"></span></summary>
+    <div class="mc-body">
+      <p class="sub">Cole aqui o texto que você recebe no WhatsApp. Ele fica salvo só neste aparelho e não é publicado. As ações do ranking citadas no texto ganham uma marca e o filtro “Citadas”.</p>
+      <textarea id="mcTexto" placeholder="Cole o Morning Call aqui" aria-label="Texto do Morning Call"></textarea>
+      <div class="row">
+        <button class="chip" id="mcSalvar" type="button">Salvar</button>
+        <button class="chip" id="mcLimpar" type="button">Limpar</button>
+      </div>
+      <div id="mcResumo"></div>
+    </div>
+  </details>
+
   <section class="controls" id="controls" hidden>
     <div class="row">
       <input type="search" id="q" placeholder="Buscar ticker" autocomplete="off" autocapitalize="characters" aria-label="Buscar ticker, por exemplo PETR4">
       <select id="ordem" aria-label="Ordenar por">
         <option value="score">Score final</option>
+        <option value="op_score">Oportunidade</option>
+        <option value="pb_score">Qualidade do pullback</option>
         <option value="score_tec">Técnica</option>
         <option value="score_val">Valor</option>
         <option value="dy">Dividendos</option>
@@ -176,7 +214,7 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
   <div class="msg" id="msg">Carregando ranking…</div>
 
   <footer>
-    Triagem automática por regras (técnica, valor e cenário de mercado). Não é recomendação de
+    Triagem automática por regras (técnica, valor, cenário de mercado, pullback e Fibonacci). Entrada, stop e alvos saem de fórmulas e não são ordem de compra. Não é recomendação de
     investimento: confira os fundamentos e o seu perfil antes de qualquer operação. Preços e
     fundamentos vêm de fontes públicas (Yahoo Finance, Fundamentus, Banco Central) e podem ter atraso ou erros.
   </footer>
@@ -201,12 +239,14 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
   };
   var FILTROS = [
     { id: "todos", rotulo: "Todos", ok: function () { return true; } },
+    { id: "oportunidades", rotulo: "Oportunidades", ok: function (a) { return !!a.oportunidade; } },
     { id: "entrada", rotulo: "Entrada", ok: function (a) { return a.sinal.indexOf("ENTRADA") === 0; } },
     { id: "aguardar", rotulo: "Aguardar", ok: function (a) { return a.sinal.indexOf("AGUARDAR") === 0; } },
-    { id: "evitar", rotulo: "Evitar", ok: function (a) { return a.sinal === "EVITAR"; } }
+    { id: "evitar", rotulo: "Evitar", ok: function (a) { return a.sinal === "EVITAR"; } },
+    { id: "citadas", rotulo: "Citadas", ok: function (a) { return !!estado.citadas[a.acao]; } }
   ];
 
-  var estado = { dados: null, filtro: "todos", ordem: "score", busca: "" };
+  var estado = { dados: null, filtro: "todos", ordem: "score", busca: "", citadas: {} };
   var $ = function (id) { return document.getElementById(id); };
 
   function h(tag, attrs, filhos) {
@@ -275,15 +315,36 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
   }
 
   /* ---------- gráfico (SVG) ---------- */
-  function renderGrafico(g) {
+  function renderGrafico(g, a) {
     if (!g || !g.close || g.close.length < 2) return h("div", { class: "sub", text: "Gráfico indisponível." });
-    var W = 340, H = 150, ml = 6, mr = 44, mt = 8, mb = 18;
+    var plano = a && a.plano, fib = a && a.fib;
+    var proj = (plano || fib) ? 100 : 0;          // faixa à direita da última vela, para projetar os níveis
+    var W = 360, H = 250, ml = 6, mr = 46, mt = 8, mb = 18;
+    var n = g.close.length;
+    var xw = W - ml - mr - proj;
+
+    var marcas = [];
+    if (fib) {
+      [["23.6", "23,6%", false], ["38.2", "38,2%", true], ["50.0", "50%", true],
+       ["61.8", "61,8%", true], ["78.6", "78,6%", false]].forEach(function (p) {
+        marcas.push({ rot: "Fib " + p[1], v: fib.niveis[p[0]], cor: "var(--c-fib)", fibo: true, rotular: p[2] });
+      });
+    }
+    if (plano) {
+      marcas.push({ rot: "Alvo 2", v: plano.alvo2, cor: "var(--good)", rotular: true, esp: 1.2, trac: "5 3" });
+      marcas.push({ rot: "Alvo 1", v: plano.alvo, cor: "var(--good)", rotular: true, esp: 1.6 });
+      marcas.push({ rot: "Entrada", v: plano.entrada, cor: "var(--c-close)", rotular: true, esp: 1.2, trac: "2 2" });
+      marcas.push({ rot: "Stop", v: plano.stop, cor: "var(--bad)", rotular: true, esp: 1.6 });
+    }
+
     var vals = [];
     [g.close, g.ema50, g.ema200].forEach(function (s) { s.forEach(function (v) { if (ok(v)) vals.push(v); }); });
+    if (plano) vals.push(plano.stop, plano.alvo2);
+    if (fib) vals.push(fib.niveis["38.2"], fib.niveis["61.8"]);
     var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
     var pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad;
-    var n = g.close.length;
-    function x(i) { return ml + (i / (n - 1)) * (W - ml - mr); }
+
+    function x(i) { return ml + (i / (n - 1)) * xw; }
     function y(v) { return mt + (1 - (v - lo) / (hi - lo)) * (H - mt - mb); }
     function caminho(s) {
       var d = "", pen = false;
@@ -294,36 +355,86 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
       });
       return d;
     }
+
     var NS = "http://www.w3.org/2000/svg";
     var svg = document.createElementNS(NS, "svg");
     svg.setAttribute("viewBox", "0 0 " + W + " " + H);
     svg.setAttribute("class", "chart");
     svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", "Preço, EMA50 e EMA200 dos últimos " + n + " pregões");
+    svg.setAttribute("aria-label", "Preço, EMA50 e EMA200 dos últimos " + n + " pregões" +
+      (plano ? ", com Fibonacci e projeção de entrada, stop e alvos" : ""));
     function el(tag, attrs, txt) {
       var e = document.createElementNS(NS, tag);
       Object.keys(attrs).forEach(function (k) { e.setAttribute(k, attrs[k]); });
       if (txt !== undefined) e.textContent = txt;
       svg.appendChild(e);
+      return e;
+    }
+    var xFim = W - mr;
+
+    if (fib) {
+      var topo = y(fib.niveis["38.2"]), base = y(fib.niveis["61.8"]);
+      el("rect", { x: ml, y: topo, width: xFim - ml, height: Math.max(1, base - topo), fill: "var(--c-fib)", "fill-opacity": 0.1 });
     }
     for (var t = 0; t <= 3; t++) {
       var v = lo + (hi - lo) * (t / 3), yy = y(v);
-      el("line", { x1: ml, x2: W - mr, y1: yy, y2: yy, stroke: "var(--line)", "stroke-width": 1, "stroke-dasharray": "2 3" });
+      el("line", { x1: ml, x2: xFim, y1: yy, y2: yy, stroke: "var(--line)", "stroke-width": 1, "stroke-dasharray": "2 3" });
       el("text", { x: W - mr + 4, y: yy + 3 }, fmt(v, 2));
     }
+
+    var visiveis = marcas.filter(function (m) { return m.v >= lo && m.v <= hi; });
+    visiveis.forEach(function (m) {
+      if (m.fibo) {
+        el("line", { x1: ml, x2: xFim, y1: y(m.v), y2: y(m.v), stroke: m.cor, "stroke-width": 1,
+          "stroke-dasharray": "4 3", "stroke-opacity": m.rotular ? 0.9 : 0.4 });
+      }
+    });
+
     el("path", { d: caminho(g.ema200), fill: "none", stroke: "var(--c-e200)", "stroke-width": 1.6 });
     el("path", { d: caminho(g.ema50), fill: "none", stroke: "var(--c-e50)", "stroke-width": 1.6 });
     el("path", { d: caminho(g.close), fill: "none", stroke: "var(--c-close)", "stroke-width": 1.8, "stroke-linejoin": "round" });
     var ult = g.close[n - 1];
     if (ok(ult)) el("circle", { cx: x(n - 1), cy: y(ult), r: 3, fill: "var(--c-close)" });
+
+    if (proj) {
+      el("line", { x1: x(n - 1), x2: x(n - 1), y1: mt, y2: H - mb, stroke: "var(--line)", "stroke-width": 1, "stroke-dasharray": "3 3" });
+      visiveis.forEach(function (m) {
+        if (m.fibo) return;
+        var att = { x1: x(n - 1), x2: xFim, y1: y(m.v), y2: y(m.v), stroke: m.cor, "stroke-width": m.esp || 1.4 };
+        if (m.trac) att["stroke-dasharray"] = m.trac;
+        el("line", att);
+      });
+      // rótulos à direita, afastados entre si
+      var rot = visiveis.filter(function (m) { return m.rotular; })
+        .map(function (m) { return { y: y(m.v), m: m }; })
+        .sort(function (p, q) { return p.y - q.y; });
+      for (var k = 1; k < rot.length; k++) {
+        if (rot[k].y - rot[k - 1].y < 10) rot[k].y = rot[k - 1].y + 10;
+      }
+      var teto = H - mb - 3;
+      if (rot.length && rot[rot.length - 1].y > teto) {
+        var sh = rot[rot.length - 1].y - teto;
+        rot.forEach(function (r) { r.y -= sh; });
+      }
+      rot.forEach(function (r) {
+        var t = el("text", { x: xFim - 3, y: Math.max(mt + 6, r.y) - 2, "text-anchor": "end", "class": "lbl" },
+          r.m.rot + " " + fmt(r.m.v, 2));
+        t.setAttribute("style", "fill:" + r.m.cor);
+      });
+      el("text", { x: xFim - 3, y: H - 4, "text-anchor": "end" }, "projeção");
+    }
+
     el("text", { x: ml, y: H - 4 }, dataBR(g.datas[0]));
-    el("text", { x: W - mr, y: H - 4, "text-anchor": "end" }, dataBR(g.datas[n - 1]));
-    var wrap = h("div", null, [svg, h("div", { class: "legend" }, [
+    el("text", { x: x(n - 1), y: H - 4, "text-anchor": proj ? "end" : "end" }, dataBR(g.datas[n - 1]));
+
+    var leg = [
       h("span", null, [h("i", { style: "background:var(--c-close)" }), "Preço"]),
       h("span", null, [h("i", { style: "background:var(--c-e50)" }), "EMA50"]),
       h("span", null, [h("i", { style: "background:var(--c-e200)" }), "EMA200"])
-    ])]);
-    return wrap;
+    ];
+    if (fib) leg.push(h("span", null, [h("i", { style: "background:var(--c-fib)" }), "Fibonacci (zona 38,2–61,8%)"]));
+    if (plano) leg.push(h("span", null, [h("i", { style: "background:var(--good)" }), "Alvos"]), h("span", null, [h("i", { style: "background:var(--bad)" }), "Stop"]));
+    return h("div", null, [svg, h("div", { class: "legend" }, leg)]);
   }
 
   /* ---------- cartão ---------- */
@@ -334,6 +445,69 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     return h("div", null, [h("h4", { text: titulo }), h("ul", null, itens.map(function (t) { return h("li", { text: t }); }))]);
   }
 
+  function subtitulo(a) {
+    var partes = ["R$ " + fmt(a.preco, 2)];
+    partes.push(a.estagio && a.estagio !== "SEM PULLBACK" ? cap(a.estagio) : cap(a.setup));
+    partes.push("tendência " + (a.tendencia || "—").toLowerCase());
+    if (a.oportunidade && a.plano) partes.push("ganho/risco " + fmt(a.plano.rr, 1) + ":1");
+    return partes.join(" · ");
+  }
+
+  function parW(rotulo, valor) {
+    return h("div", { class: "wide" }, [h("dt", { text: rotulo }), h("dd", { class: "num", text: valor })]);
+  }
+
+  function caixa(rot, val, cls, sub) {
+    return h("div", { class: "stat" }, [
+      h("small", { text: rot }),
+      h("b", { class: "num " + (cls || ""), text: val }),
+      sub ? h("div", { class: "note num", text: sub }) : null
+    ]);
+  }
+
+  function blocoPlano(a) {
+    var p = a.plano;
+    if (!p) return null;
+    return h("div", null, [
+      h("h3", { text: "Plano da operação" }),
+      h("div", { class: "plan" }, [
+        caixa("Entrada", "R$ " + fmt(p.entrada, 2)),
+        caixa("Stop", "R$ " + fmt(p.stop, 2), "neg", "−" + fmt(p.risco_pct, 1, "%")),
+        caixa("Alvo 1", "R$ " + fmt(p.alvo, 2), "pos", "+" + fmt(p.ganho_pct, 1, "%") + " · " + p.alvo_tipo),
+        caixa("Alvo 2", "R$ " + fmt(p.alvo2, 2), "pos", "+" + fmt(p.ganho2_pct, 1, "%")),
+        caixa("Ganho/risco", fmt(p.rr, 1) + " : 1", p.rr >= 2 ? "pos" : "")
+      ]),
+      h("p", { class: "note", text:
+        (p.valido ? "" : "Stop distante: o risco passa de 10% do preço. ") +
+        "Calculado por regra: stop abaixo da menor mínima de 10 pregões e do nível de Fibonacci logo abaixo, menos 0,5 ATR. Não é ordem de compra." })
+    ]);
+  }
+
+  function blocoPullback(a) {
+    var f = a.fib;
+    var linhas = [
+      par("Estágio", cap(a.estagio)),
+      par("Qualidade", ok(a.pb_score) ? fmt(a.pb_score, 0) + "/100" : "—")
+    ];
+    if (f) {
+      linhas.push(parW("Recuo da perna", fmt(a.retr_fib * 100, 0, "%") + (a.nivel_fib ? " · perto do nível " + a.nivel_fib : "")));
+      linhas.push(parW("Perna de alta", "R$ " + fmt(f.baixo, 2) + " → R$ " + fmt(f.alto, 2) + " (+" + fmt(f.amplitude_pct, 0, "%") + ")"));
+      linhas.push(parW("Zona 38,2% a 61,8%", "R$ " + fmt(f.niveis["61.8"], 2) + " a R$ " + fmt(f.niveis["38.2"], 2)));
+    }
+    if (a.candle) linhas.push(par("Candle", a.candle));
+    if (ok(a.atr_pct)) linhas.push(par("ATR", fmt(a.atr_pct, 1, "%")));
+
+    var hp = a.hist_pb, txt;
+    if (hp) {
+      txt = "Histórico deste papel: " + hp.n + " pullbacks na EMA50 em 5 anos; " + fmt(hp.taxa, 0, "%") +
+        " chegaram a 2 vezes o risco em até 30 pregões, com resultado médio de " + sinalFmt(hp.esperanca_r, 2) +
+        " R por operação." + (hp.amostra_pequena ? " Amostra pequena." : "") + " Passado não garante o futuro.";
+    } else {
+      txt = "Histórico deste papel: poucas ocorrências de pullback na EMA50 para medir.";
+    }
+    return h("div", null, [h("h3", { text: "Pullback e Fibonacci" }), h("dl", null, linhas), h("p", { class: "hist", text: txt })]);
+  }
+
   function corpo(a) {
     return h("div", { class: "detail" }, [
       h("div", { class: "triple" }, [
@@ -341,7 +515,9 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
         h("div", { class: "stat" }, [h("small", { text: "Valor" }), h("b", { class: "num", text: fmt(a.score_val, 0) })]),
         h("div", { class: "stat" }, [h("small", { text: "Cenário" }), h("b", { class: "num", text: sinalFmt(a.ajuste, 0) })])
       ]),
-      renderGrafico(a.grafico),
+      renderGrafico(a.grafico, a),
+      blocoPlano(a),
+      blocoPullback(a),
       h("div", null, [h("h3", { text: "Técnica" }), h("dl", null, [
         par("RSI", fmt(a.rsi, 1) + (a.rsi_status ? " · " + a.rsi_status.toLowerCase() : "")),
         par("MACD", (a.macd_status || "—").toLowerCase()),
@@ -364,6 +540,8 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
       ])]),
       h("details", { class: "why" }, [
         h("summary", { text: "Por que esse score" }),
+        lista("Pullback", a.pb_motivos),
+        lista(a.oportunidade ? "Por que é oportunidade" : "O que falta para ser oportunidade", a.op_notas),
         lista("Técnica", a.motivos),
         lista("Valor", a.motivos_val),
         lista("Cenário", a.motivos_cen)
@@ -377,10 +555,12 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     var sum = h("summary", null, [
       h("div", { class: "head2" }, [
         h("span", { class: "tick", text: a.acao }),
-        h("span", { class: "pill t-" + s.tom, text: s.rotulo })
+        h("span", { class: "pill t-" + s.tom, text: s.rotulo }),
+        a.oportunidade ? h("span", { class: "pill t-op", text: "Oportunidade" }) : null,
+        a.novo_hoje ? h("span", { class: "pill t-new", text: "Novo hoje" }) : null,
+        estado.citadas[a.acao] ? h("span", { class: "pill t-cit", text: "Citada no Morning Call" }) : null
       ]),
-      h("div", { class: "sub num", text:
-        "R$ " + fmt(a.preco, 2) + " · " + cap(a.setup) + " · tendência " + (a.tendencia || "—").toLowerCase() }),
+      h("div", { class: "sub num", text: subtitulo(a) }),
       h("div", { class: "score t-" + s.tom, style: "background:none" }, [
         h("b", { class: "num", text: fmt(a.score, 0) }),
         h("div", { class: "bar" }, [h("i", { style: "width:" + Math.max(0, Math.min(100, a.score || 0)) + "%" })])
@@ -425,7 +605,9 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     $("count").textContent = itens.length + " de " + estado.dados.acoes.length + " ações";
     var msg = $("msg");
     msg.hidden = itens.length > 0;
-    if (!itens.length) msg.textContent = "Nenhuma ação com esse filtro.";
+    if (!itens.length) msg.textContent = estado.filtro === "oportunidades"
+      ? "Nenhuma oportunidade de pullback hoje. O filtro é rigoroso de propósito; veja “Todos” para acompanhar as ações em correção."
+      : "Nenhuma ação com esse filtro.";
   }
 
   function renderChips() {
@@ -445,10 +627,85 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     $("stamp").title = "Gerado em " + d.gerado_em;
     renderRegime(d.regime);
     $("controls").hidden = false;
+    iniciarMC();
+    if (d.acoes.some(function (a) { return a.oportunidade; })) {
+      estado.filtro = "oportunidades";
+      estado.ordem = "op_score";
+      $("ordem").value = "op_score";
+    }
     renderChips();
     renderLista();
     $("q").addEventListener("input", function (e) { estado.busca = e.target.value; renderLista(); });
     $("ordem").addEventListener("change", function (e) { estado.ordem = e.target.value; renderLista(); });
+  }
+
+  /* ---------- Morning Call (fica só neste aparelho) ---------- */
+  var MC_CHAVE = "b3_morning_call";
+
+  function mcLer() {
+    try { return JSON.parse(localStorage.getItem(MC_CHAVE) || "null"); } catch (e) { return null; }
+  }
+  function mcGravar(v) {
+    try {
+      if (v) localStorage.setItem(MC_CHAVE, JSON.stringify(v));
+      else localStorage.removeItem(MC_CHAVE);
+      return true;
+    } catch (e) { return false; }
+  }
+  function mcTickers(txt) {
+    var achados = txt.match(/\b[A-Z]{4}\d{1,2}\b/g) || [], vistos = {}, lista = [];
+    achados.forEach(function (t) { if (!vistos[t]) { vistos[t] = 1; lista.push(t); } });
+    return lista;
+  }
+  function mcData(txt) {
+    var m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(txt);
+    return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null;
+  }
+  function mcAtualizar() {
+    var salvo = mcLer(), st = $("mcStatus"), res = $("mcResumo");
+    estado.citadas = {};
+    res.textContent = "";
+    if (!salvo || !salvo.texto) { st.textContent = "· nenhum texto salvo"; return; }
+
+    var txt = salvo.texto, presentes = {}, dentro = [], fora = [];
+    estado.dados.acoes.forEach(function (a) {
+      presentes[a.acao] = 1;
+      if (new RegExp("\\b" + a.acao + "\\b").test(txt)) { dentro.push(a.acao); estado.citadas[a.acao] = true; }
+    });
+    mcTickers(txt).forEach(function (t) { if (!presentes[t]) fora.push(t); });
+
+    var partes = [], d = mcData(txt);
+    if (d) {
+      partes.push(d.toLocaleDateString("pt-BR"));
+      var dias = Math.floor((Date.now() - d.getTime()) / 864e5);
+      if (dias >= 3) partes.push("texto de " + dias + " dias atrás");
+    }
+    partes.push(dentro.length + (dentro.length === 1 ? " citada" : " citadas") + " no ranking");
+    st.textContent = "· " + partes.join(" · ");
+
+    if (dentro.length) res.appendChild(h("p", { class: "sub", text: "No ranking: " + dentro.join(", ") }));
+    if (fora.length) res.appendChild(h("p", { class: "sub", text: "Fora das " + estado.dados.acoes.length + " ações analisadas: " + fora.join(", ") }));
+  }
+  function iniciarMC() {
+    var salvo = mcLer();
+    $("mcTexto").value = salvo && salvo.texto ? salvo.texto : "";
+    $("mcSalvar").addEventListener("click", function () {
+      var txt = $("mcTexto").value.trim();
+      if (!txt) return;
+      if (!mcGravar({ texto: txt.slice(0, 20000), salvoEm: Date.now() })) {
+        $("mcStatus").textContent = "· não foi possível salvar neste navegador";
+        return;
+      }
+      mcAtualizar(); renderChips(); renderLista();
+    });
+    $("mcLimpar").addEventListener("click", function () {
+      $("mcTexto").value = "";
+      mcGravar(null);
+      if (estado.filtro === "citadas") estado.filtro = "todos";
+      mcAtualizar(); renderChips(); renderLista();
+    });
+    mcAtualizar();
+    $("mc").hidden = false;
   }
 
   function aviso(texto) {
