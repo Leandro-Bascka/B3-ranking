@@ -39,7 +39,7 @@ warnings.filterwarnings("ignore")
 # ==============================================================================
 
 QTDE_ATIVOS = 80
-PERIODO_HISTORICO = "2y"        # era "1y" (insuficiente para o corte de 300 linhas)
+PERIODO_HISTORICO = "5y"        # era "1y" (insuficiente); 5 anos dão amostra ao histórico do setup
 INTERVALO = "1d"
 PAUSA = 0.15
 
@@ -62,6 +62,23 @@ INDICE = "^BVSP"
 DOLAR = "USDBRL=X"
 PERIODO_BETA = 250              # pregões usados no cálculo do beta
 PERIODO_FR = 60                 # pregões da força relativa vs Ibovespa
+
+# --- Pullback / Fibonacci (V3.1) ---------------------------------------------
+PERIODO_ATR = 14
+JANELA_SWING = 120              # pregões analisados para achar a perna de alta
+MAX_IDADE_ALTO = 60             # a máxima da perna precisa ser dos últimos 60 pregões
+MAX_PERNA = 60                  # a perna de alta tem no máximo 60 pregões (da mínima à máxima)
+AMPLITUDE_MIN = 0.08            # perna de alta mínima de 8% (da mínima à máxima)
+FIB_NIVEIS = (0.236, 0.382, 0.5, 0.618, 0.786)
+FIB_ZONA = (0.382, 0.618)       # zona de maior probabilidade do recuo
+FIB_MAX_RETR = 0.806            # além de 78,6% (com tolerância) o pullback é considerado rompido
+STOP_MAX_PCT = 10.0             # stop mais distante que isso invalida o plano
+RR_MIN = 2.0                    # ganho/risco mínimo para virar oportunidade
+RR_MIN_DEFENSIVO = 3.0          # idem, quando o regime é RISK-OFF
+PB_MIN = 60                     # nota mínima de qualidade do pullback
+VALOR_MIN = 40                  # nota de valor mínima (quando existir)
+HIST_HORIZONTE = 30             # pregões para o alvo ser atingido, no histórico do setup
+HIST_ALVO_R = 2.0               # alvo do histórico: 2 vezes o risco
 
 # Pesos por regime: (peso técnica, peso valor, multiplicador do score)
 PESOS_REGIME = {
@@ -310,6 +327,9 @@ def calcular_indicadores(df):
 
     df["TENDENCIA_ALTA"] = (df["Close"] > df["EMA50"]) & (df["EMA50"] > df["EMA200"]) & (df["EMA200_UP"])
     df["MEDIAS_ALINHADAS"] = (df["EMA9"] > df["EMA21"]) & (df["EMA21"] > df["EMA50"]) & (df["EMA50"] > df["EMA200"])
+
+    df["ATR"] = calcular_atr(df)
+    df["ATR_PCT"] = df["ATR"] / df["Close"] * 100
     return df
 
 
@@ -807,6 +827,359 @@ def score_cenario(beta, fr, regime):
 
 
 # ==============================================================================
+# NOVO (V3.1): PULLBACK, FIBONACCI, PLANO DA OPERAÇÃO E HISTÓRICO DO SETUP
+# ==============================================================================
+
+def calcular_atr(df, periodo=PERIODO_ATR):
+    """Oscilação média diária (Average True Range)."""
+    close = df["Close"]
+    tr = pd.concat([df["High"] - df["Low"],
+                    (df["High"] - close.shift(1)).abs(),
+                    (df["Low"] - close.shift(1)).abs()], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / periodo, adjust=False).mean()
+
+
+def _num(x, casas=2):
+    return float(round(float(x), casas))
+
+
+def calcular_fibonacci(df):
+    """
+    Perna de alta mais recente: a máxima dos últimos MAX_IDADE_ALTO pregões e a
+    menor mínima que a antecede dentro de JANELA_SWING pregões. O recuo (retr) é
+    a fração dessa perna que o preço já devolveu: 0 = na máxima, 1 = na mínima.
+    Retorna None quando não há perna de alta relevante.
+    """
+    janela = df.tail(JANELA_SWING)
+    if len(janela) < 40:
+        return None
+    recente = janela.tail(MAX_IDADE_ALTO)
+    alto = float(recente["High"].max())
+    data_alto = recente["High"].idxmax()
+    antes = janela.loc[:data_alto].tail(MAX_PERNA + 1)
+    baixo = float(antes["Low"].min())
+    data_baixo = antes["Low"].idxmin()
+    amplitude = alto - baixo
+    if baixo <= 0 or amplitude / baixo < AMPLITUDE_MIN:
+        return None
+
+    close = float(df["Close"].iloc[-1])
+    return {
+        "alto": _num(alto),
+        "baixo": _num(baixo),
+        "data_alto": data_alto.strftime("%Y-%m-%d"),
+        "data_baixo": data_baixo.strftime("%Y-%m-%d"),
+        "idade_alto": int(len(df) - 1 - df.index.get_loc(data_alto)),
+        "amplitude_pct": _num(amplitude / baixo * 100, 1),
+        "retr": float(round((alto - close) / amplitude, 4)),
+        "niveis": {f"{k * 100:.1f}": _num(alto - k * amplitude) for k in FIB_NIVEIS},
+    }
+
+
+def identificar_candle_alta(df):
+    """Martelo ou engolfo de alta no último candle."""
+    if len(df) < 2:
+        return None
+    a, p = df.iloc[-1], df.iloc[-2]
+    rng = float(a["High"] - a["Low"])
+    if rng <= 0:
+        return None
+    corpo = abs(float(a["Close"] - a["Open"]))
+    base = max(corpo, 0.1 * rng)
+    sombra_inf = float(min(a["Open"], a["Close"]) - a["Low"])
+    sombra_sup = float(a["High"] - max(a["Open"], a["Close"]))
+    if sombra_inf >= 2 * base and sombra_sup <= base and (a["Close"] - a["Low"]) / rng >= 0.6:
+        return "martelo"
+    if p["Close"] < p["Open"] and a["Close"] > a["Open"] and a["Close"] >= p["Open"] and a["Open"] <= p["Close"]:
+        return "engolfo de alta"
+    return None
+
+
+def avaliar_pullback(df, fib, fr):
+    """
+    Estágio do pullback e nota de qualidade (0-100).
+    Estágios: SEM PULLBACK, ROMPEU, EM CORREÇÃO, NO SUPORTE, RETOMANDO.
+    """
+    atual, ant = df.iloc[-1], df.iloc[-2]
+    close = float(atual["Close"])
+    retr = fib["retr"] if fib else None
+    contexto = bool(atual["EMA50"] > atual["EMA200"] and close > atual["EMA200"])
+
+    ult5 = df.tail(5)
+    tocou = bool((((ult5["Low"] - ult5["EMA50"]) / ult5["EMA50"]).abs() <= TOLERANCIA_EMA50).any())
+    na_zona = bool(fib and (FIB_ZONA[0] - 0.02) <= retr <= (FIB_ZONA[1] + 0.02))
+    candle = identificar_candle_alta(df)
+    rompeu_max = bool(close > float(ant["High"]))
+    acima_ema9 = bool(close > float(atual["EMA9"]) and close > float(ant["Close"]))
+    confirmou = bool(candle or rompeu_max or acima_ema9)
+
+    nivel = None
+    if fib:
+        k = min(FIB_NIVEIS, key=lambda x: abs(retr - x))
+        nivel = f"{k * 100:.1f}%".replace(".", ",")
+
+    motivos = []
+    if not contexto:
+        estagio = "SEM PULLBACK"
+        motivos.append("Fora de tendência de alta (exige EMA50 > EMA200 e preço > EMA200)")
+    elif fib is not None and (retr > FIB_MAX_RETR or close < fib["baixo"]):
+        estagio = "ROMPEU"
+        motivos.append(f"Recuo de {retr * 100:.0f}% passou de 78,6%: a perna de alta foi perdida")
+    elif fib is None and not tocou:
+        estagio = "SEM PULLBACK"
+        motivos.append("Sem perna de alta recente e sem toque na EMA50")
+    elif fib is not None and retr < 0.15 and not tocou:
+        estagio = "SEM PULLBACK"
+        motivos.append(f"Preço perto da máxima (recuo de {retr * 100:.0f}%)")
+    else:
+        suporte = na_zona or tocou
+        if suporte and confirmou and close > float(ant["Close"]):
+            estagio = "RETOMANDO"
+        elif suporte:
+            estagio = "NO SUPORTE"
+        else:
+            estagio = "EM CORREÇÃO"
+
+    if estagio in ("SEM PULLBACK", "ROMPEU"):
+        return {"estagio": estagio, "pb_score": None, "nivel": nivel,
+                "candle": candle, "motivos": motivos}
+
+    pts = 0
+
+    # contexto de tendência (20)
+    ctx = 0
+    ctx += 8 if atual["EMA50"] > atual["EMA200"] else 0
+    ctx += 4 if atual["EMA200_UP"] else 0
+    ctx += 4 if close > atual["EMA200"] else 0
+    ctx += 4 if atual["EMA50_UP"] else 0
+    pts += ctx
+    motivos.append(f"Tendência de alta: {ctx}/20")
+
+    # força relativa contra o Ibovespa (5)
+    if _valido(fr):
+        if fr > 0:
+            pts += 5
+            motivos.append(f"Mais forte que o Ibovespa em {PERIODO_FR} pregões ({fr:+.1f} p.p.)")
+        elif fr > -3:
+            pts += 2
+
+    # profundidade do recuo (25)
+    if fib is not None:
+        pr = f"{retr * 100:.0f}%"
+        if 0.362 <= retr <= 0.638:
+            pts += 25
+            motivos.append(f"Recuo de {pr} da perna de alta: dentro da zona de 38,2% a 61,8%")
+        elif 0.216 <= retr < 0.362 or 0.638 < retr <= FIB_MAX_RETR:
+            pts += 15
+            motivos.append(f"Recuo de {pr}: fora da zona ideal, mas ainda válido")
+        elif retr >= 0.15:
+            pts += 8
+            motivos.append(f"Recuo raso de {pr}")
+    elif tocou:
+        pts += 8
+        motivos.append("Toque na EMA50 sem perna de alta clara para medir o recuo")
+
+    # volume durante o recuo (15)
+    vol_media = float(atual["VOL_MEDIA"]) if _valido(atual["VOL_MEDIA"]) else 0.0
+    if vol_media > 0:
+        v5 = float(df["Volume"].tail(5).mean()) / vol_media
+        if v5 <= 0.8:
+            pts += 15
+            motivos.append(f"Volume secando no recuo ({v5:.2f}x da média): vendedores fracos")
+        elif v5 <= 1.0:
+            pts += 10
+            motivos.append(f"Volume abaixo da média no recuo ({v5:.2f}x)")
+        elif v5 <= 1.2:
+            pts += 4
+        else:
+            motivos.append(f"Volume alto no recuo ({v5:.2f}x): atenção a venda forte")
+
+    # RSI reiniciado (15)
+    rsi = float(atual["RSI"])
+    subindo = bool(atual["RSI_UP"])
+    if 40 <= rsi <= 50 and subindo:
+        pts += 15
+        motivos.append(f"RSI reiniciado e subindo ({rsi:.0f})")
+    elif 40 <= rsi <= 55:
+        pts += 10
+        motivos.append(f"RSI em zona de repouso ({rsi:.0f})")
+    elif 55 < rsi <= 60:
+        pts += 6
+    elif rsi < 40:
+        pts += 3
+        motivos.append(f"RSI fraco ({rsi:.0f})")
+
+    # confirmação do candle (20)
+    conf = 0
+    if candle:
+        conf += 10
+        motivos.append(f"Candle de {candle}")
+    if rompeu_max:
+        conf += 6
+        motivos.append("Fechou acima da máxima do dia anterior")
+    if close > float(atual["EMA9"]):
+        conf += 4
+    pts += conf
+
+    return {"estagio": estagio, "pb_score": int(min(100, pts)), "nivel": nivel,
+            "candle": candle, "motivos": motivos}
+
+
+def montar_plano(df, fib):
+    """
+    Plano da operação (regra, não recomendação):
+      entrada  = preço atual
+      stop     = abaixo da menor mínima de 10 pregões e do nível de Fibonacci imediatamente
+                 abaixo do preço (o que for mais baixo), menos 0,5 ATR
+      alvo 1   = máxima anterior da perna de alta (ou 2x o risco, sem perna)
+      alvo 2   = extensão de 127,2% da perna (ou 3x o risco)
+    """
+    atual = df.iloc[-1]
+    entrada = float(atual["Close"])
+    atr = float(atual["ATR"])
+    if not _valido(atr) or atr <= 0:
+        return None
+
+    stop = float(df["Low"].tail(10).min())
+    if fib:
+        abaixo = [p for p in fib["niveis"].values() if p < entrada]
+        if abaixo:
+            stop = min(stop, max(abaixo))
+    stop -= 0.5 * atr
+    if stop >= entrada:
+        return None
+
+    risco = entrada - stop
+    risco_pct = risco / entrada * 100
+    if fib and fib["alto"] > entrada * 1.01:
+        alvo = fib["alto"]
+        alvo_tipo = "máxima anterior"
+        alvo2 = fib["alto"] + 0.272 * (fib["alto"] - fib["baixo"])
+    else:
+        alvo = entrada + 2 * risco
+        alvo_tipo = "2 × risco"
+        alvo2 = entrada + 3 * risco
+
+    return {
+        "entrada": _num(entrada),
+        "stop": _num(stop),
+        "alvo": _num(alvo),
+        "alvo2": _num(alvo2),
+        "alvo_tipo": alvo_tipo,
+        "risco_pct": _num(risco_pct, 1),
+        "ganho_pct": _num((alvo - entrada) / entrada * 100, 1),
+        "ganho2_pct": _num((alvo2 - entrada) / entrada * 100, 1),
+        "rr": _num((alvo - entrada) / risco),
+        "valido": bool(risco_pct <= STOP_MAX_PCT),
+    }
+
+
+def historico_pullback(df):
+    """
+    Como esta ação se comportou nos pullbacks passados à EMA50 (mesma regra do
+    seu identificar_pullback). Para cada ocorrência: entrada no fechamento, stop
+    abaixo da menor mínima de 10 pregões menos 0,5 ATR, alvo de 2x o risco,
+    prazo de HIST_HORIZONTE pregões. Stop e alvo no mesmo dia contam como stop.
+    Só entram ocorrências que tiveram o prazo completo. Usa apenas dados até o
+    dia de cada sinal para decidir a entrada.
+    """
+    n = len(df)
+    if n < 260:
+        return None
+    close = df["Close"].values
+    low = df["Low"].values
+    high = df["High"].values
+    e50 = df["EMA50"].values
+    e200 = df["EMA200"].values
+    atr = df["ATR"].values
+
+    resultados, neutros = [], 0
+    i = 210                                  # depois do aquecimento da EMA200
+    while i < n - 1:
+        j = slice(i - 9, i + 1)
+        if not ((e50[j] > e200[j]).mean() >= 0.70 and close[i] > e200[i]):
+            i += 1
+            continue
+        toque = bool((np.abs(low[j] - e50[j]) / e50[j] <= TOLERANCIA_EMA50).any())
+        if not (toque and close[i] > e50[i] and close[i] > close[i - 1]):
+            i += 1
+            continue
+
+        entrada = close[i]
+        stop = low[j].min() - 0.5 * atr[i]
+        risco = entrada - stop
+        fim = i + HIST_HORIZONTE
+        if risco > 0 and risco / entrada * 100 <= STOP_MAX_PCT and fim <= n - 1:
+            alvo = entrada + HIST_ALVO_R * risco
+            res = None
+            for k in range(i + 1, fim + 1):
+                if low[k] <= stop:
+                    res = -1.0
+                    break
+                if high[k] >= alvo:
+                    res = HIST_ALVO_R
+                    break
+            if res is None:
+                neutros += 1
+            else:
+                resultados.append(res)
+        i += 10                              # evita contar o mesmo pullback várias vezes
+
+    if not resultados:
+        return None
+    total = len(resultados)
+    acertos = sum(1 for r in resultados if r > 0)
+    return {
+        "n": total,
+        "acertos": acertos,
+        "taxa": _num(acertos / total * 100, 0),
+        "esperanca_r": _num(sum(resultados) / total),
+        "neutros": neutros,
+        "amostra_pequena": bool(total < 8),
+    }
+
+
+def avaliar_oportunidade(estagio, pb_score, plano, tendencia, close, ema200, score_val, regime_nome):
+    """Oportunidade = pullback no suporte + boa qualidade + ganho/risco suficiente."""
+    rr_min = RR_MIN_DEFENSIVO if regime_nome == "RISK-OFF" else RR_MIN
+    ok_notas, falta = [], []
+
+    if estagio in ("NO SUPORTE", "RETOMANDO"):
+        ok_notas.append(f"Estágio: {estagio.lower()}")
+    elif estagio == "EM CORREÇÃO":
+        falta.append("Ainda em correção: esperar chegar a um suporte")
+    else:
+        falta.append(f"Estágio {estagio.lower()}: não há pullback aproveitável")
+
+    if pb_score is not None and pb_score >= PB_MIN:
+        ok_notas.append(f"Qualidade do pullback {pb_score}/100")
+    elif pb_score is not None:
+        falta.append(f"Qualidade do pullback {pb_score}/100, abaixo do mínimo de {PB_MIN}")
+
+    if plano is None:
+        falta.append("Não foi possível montar o plano (stop inválido)")
+    else:
+        if not plano["valido"]:
+            falta.append(f"Stop distante demais ({plano['risco_pct']:.1f}% do preço; máximo {STOP_MAX_PCT:.0f}%)")
+        if plano["rr"] >= rr_min:
+            ok_notas.append(f"Ganho/risco de {plano['rr']:.1f} para 1")
+        else:
+            falta.append(f"Ganho/risco de {plano['rr']:.1f} para 1, abaixo do mínimo de {rr_min:.0f} para 1")
+
+    if tendencia == "BAIXA" or close <= ema200:
+        falta.append("Tendência de baixa ou preço abaixo da EMA200")
+
+    if _valido(score_val) and score_val < VALOR_MIN:
+        falta.append(f"Nota de valor baixa ({score_val:.0f}, mínimo {VALOR_MIN})")
+
+    if regime_nome == "RISK-OFF":
+        ok_notas.append("Mercado defensivo: exigido ganho/risco de pelo menos 3 para 1")
+
+    ok = not falta
+    return ok, (ok_notas if ok else [f"Falta: {f}" for f in falta])
+
+
+# ==============================================================================
 # ANÁLISE DO ATIVO
 # ==============================================================================
 
@@ -954,6 +1327,20 @@ def analisar_ativo(acao, liquidez, fund=None, regime=None):
     final = max(0, min(100, final))
     sinal = classificar_sinal(final)
 
+    # ---------------- NOVO (V3.1): pullback, Fibonacci e plano ----------------
+    fib = calcular_fibonacci(df)
+    av = avaliar_pullback(df, fib, fr)
+    plano = montar_plano(df, fib)
+    hist_pb = historico_pullback(df)
+    oportunidade, op_notas = avaliar_oportunidade(
+        av["estagio"], av["pb_score"], plano, tendencia,
+        float(atual["Close"]), float(atual["EMA200"]), score_val, nome_regime)
+    op_score = None
+    if oportunidade:
+        op_score = float(round(0.5 * av["pb_score"]
+                               + 0.3 * min(plano["rr"] / 4, 1) * 100
+                               + 0.2 * final, 1))
+
     return {
         "AÇÃO": acao,
         "PREÇO": atual["Close"],
@@ -1001,4 +1388,18 @@ def analisar_ativo(acao, liquidez, fund=None, regime=None):
         "MOTIVOS": " | ".join(motivos),
         "MOTIVOS_VAL": " | ".join(motivos_val),
         "MOTIVOS_CEN": " | ".join(motivos_cen),
+        # --- pullback, Fibonacci e plano da operação (V3.1) ---
+        "ESTAGIO": av["estagio"],
+        "PB_SCORE": av["pb_score"],
+        "RETR_FIB": fib["retr"] if fib else np.nan,
+        "NIVEL_FIB": av["nivel"],
+        "CANDLE": av["candle"],
+        "ATR_PCT": atual["ATR_PCT"],
+        "FIB": fib,
+        "PLANO": plano,
+        "HIST_PB": hist_pb,
+        "OPORTUNIDADE": oportunidade,
+        "OP_SCORE": op_score,
+        "OP_NOTAS": " | ".join(op_notas),
+        "PB_MOTIVOS": " | ".join(av["motivos"]),
     }

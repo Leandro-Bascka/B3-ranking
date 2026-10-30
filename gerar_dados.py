@@ -113,8 +113,38 @@ def montar_acao(r):
         "motivos": lista(r["MOTIVOS"]),
         "motivos_val": lista(r["MOTIVOS_VAL"]),
         "motivos_cen": lista(r["MOTIVOS_CEN"]),
+        # pullback, Fibonacci e plano da operação
+        "estagio": r["ESTAGIO"],
+        "pb_score": limpo(r["PB_SCORE"]),
+        "retr_fib": limpo(r["RETR_FIB"]),
+        "nivel_fib": r["NIVEL_FIB"] if isinstance(r["NIVEL_FIB"], str) else None,
+        "candle": r["CANDLE"] if isinstance(r["CANDLE"], str) else None,
+        "atr_pct": limpo(r["ATR_PCT"]),
+        "fib": r["FIB"] if isinstance(r["FIB"], dict) else None,
+        "plano": r["PLANO"] if isinstance(r["PLANO"], dict) else None,
+        "hist_pb": r["HIST_PB"] if isinstance(r["HIST_PB"], dict) else None,
+        "oportunidade": bool(r["OPORTUNIDADE"]),
+        "op_score": limpo(r["OP_SCORE"]),
+        "op_notas": lista(r["OP_NOTAS"]),
+        "pb_motivos": lista(r["PB_MOTIVOS"]),
+        "novo_hoje": False,
         "grafico": grafico,
     }
+
+
+def carregar_anterior(saida, data_pregao):
+    """Resumo do último pregão gravado antes de data_pregao (para marcar 'novo hoje')."""
+    pasta = os.path.join(saida, "historico")
+    if not os.path.isdir(pasta) or not data_pregao:
+        return None
+    arquivos = sorted(f for f in os.listdir(pasta) if f.endswith(".json") and f[:-5] < data_pregao)
+    if not arquivos:
+        return None
+    try:
+        with open(os.path.join(pasta, arquivos[-1]), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
 def escrever_json(caminho, obj):
@@ -179,18 +209,27 @@ def main(saida=SAIDA):
         }
 
     dados = {
-        "versao": "3.0",
+        "versao": "3.1",
         "gerado_em": datetime.datetime.now(FUSO).isoformat(timespec="minutes"),
         "data_pregao": data_pregao,
         "regime": regime_json,
         "acoes": [montar_acao(r) for _, r in ranking.iterrows()],
         "falhas": falhas,
     }
+    # 'novo hoje': virou oportunidade desde o último pregão gravado que já tinha essa informação
+    anterior = carregar_anterior(saida, data_pregao)
+    if anterior and any("op" in a for a in anterior.get("acoes", [])):
+        ops_ant = {a["acao"] for a in anterior["acoes"] if a.get("op")}
+        for a in dados["acoes"]:
+            a["novo_hoje"] = bool(a["oportunidade"] and a["acao"] not in ops_ant)
+    dados["n_oportunidades"] = sum(1 for a in dados["acoes"] if a["oportunidade"])
+
     escrever_json(os.path.join(saida, "data.json"), dados)
 
     resumo = [{
         "acao": a["acao"], "preco": a["preco"], "score": a["score"],
         "score_tec": a["score_tec"], "score_val": a["score_val"], "sinal": a["sinal"],
+        "op": a["oportunidade"], "estagio": a["estagio"], "pb_score": a["pb_score"],
         "regime": regime_json["nome"] if regime_json else None,
     } for a in dados["acoes"]]
     if data_pregao:
