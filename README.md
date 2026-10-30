@@ -1,6 +1,6 @@
 # Ranking B3 no celular
 
-Um site que mostra o ranking do Scanner B3 V3.0 e se atualiza sozinho todo dia útil, às 18h (horário de Brasília), depois do fechamento da bolsa. Você abre o link no celular e vê o resultado.
+Um site que mostra o ranking do Scanner B3 V3.2 e se atualiza sozinho todo dia útil, às 18h (horário de Brasília), depois do fechamento da bolsa. Você abre o link no celular e vê o resultado.
 
 Como funciona: o GitHub roda o `gerar_dados.py` todo dia, que grava `docs/data.json`. A página `docs/index.html` lê esse arquivo e mostra o cenário de mercado, a lista de ações com filtros e, em cada ação, os detalhes e o gráfico.
 
@@ -14,6 +14,33 @@ Como funciona: o GitHub roda o `gerar_dados.py` todo dia, que grava `docs/data.j
 | `docs/index.html` | A página que você abre no celular. |
 | `.github/workflows/atualizar.yml` | A rotina diária do GitHub. |
 | `requirements.txt` | Bibliotecas do gerador. |
+
+## Pullback, Fibonacci e plano da operação (novo na V3.1)
+
+Para cada ação, o sistema procura a última perna de alta (até 60 pregões), calcula o recuo de Fibonacci (23,6% a 78,6%) e classifica o estágio: sem pullback, em correção, no suporte (zona 38,2% a 61,8%), retomando ou rompeu. A qualidade do pullback vai de 0 a 100 (tendência, força relativa, profundidade, volume secando, RSI e candle de confirmação).
+
+O plano sai por fórmula: entrada no preço atual, stop abaixo da menor mínima de 10 pregões e do nível de Fibonacci logo abaixo (menos 0,5 ATR), alvo 1 na máxima anterior e alvo 2 na extensão de 27,2%. O gráfico projeta tudo à direita da última vela.
+
+Uma ação vira **Oportunidade** quando está no suporte ou retomando, com qualidade 60 ou mais, ganho/risco de 2:1 ou mais (3:1 em RISK-OFF), tendência não baixista, preço acima da EMA200 e valor mínimo aceitável. O filtro é rigoroso de propósito: pode haver dias sem nenhuma. Cada ação mostra também quantas vezes o pullback na EMA50 deu certo no passado dela (amostra pequena é sinalizada). O selo "Novo hoje" aparece só a partir do segundo dia de execução. Nada disso é recomendação de compra.
+
+Os pontos de ajuste ficam no topo do `b3_core.py` (`RR_MIN`, `PB_MIN`, `STOP_MAX_PCT`, `FIB_ZONA`...). O histórico baixado agora é de 5 anos (`PERIODO_HISTORICO`).
+
+## Reversão, líderes e termômetro (novo na V3.2)
+
+Quando o mercado cai, procurar pullback em tendência de alta deixa de ser o único jogo. A V3.2 separa o que o preço mostra do que ninguém prevê (notícias, política) e organiza o ranking em listas:
+
+- **Oportunidades:** pullback no suporte de Fibonacci, como na V3.1.
+- **Reversão:** ações que caíram forte e estão virando, em três etapas. *Capitulação* (RSI abaixo de 30, volume e volatilidade em pico, preço esticado abaixo da EMA50), *estabilização* (o fundo segura, sem nova mínima, com fundo mais alto ou divergência de alta no RSI) e *confirmação* (fecha acima da EMA9 e EMA21, histograma do MACD subindo, MACD acima da sinal, volume nos dias de alta). Estágios: em queda, capitulação, estabilizando, confirmando, confirmada e recuperada (tarde demais). A reversão só vira "confirmada" com plano válido (stop de até 10%) e ganho/risco mínimo de 2:1 (3:1 em mercado defensivo).
+- **Líderes:** ações que seguram preço acima da EMA50 e EMA200 e superam o Ibovespa em 20 e 60 pregões, a no máximo 10% da máxima. Costumam ser as primeiras a subir na virada.
+- **Termômetro do mercado:** percentual de ações acima da EMA50 e EMA200 (e a variação em 5 pregões), mínimas contra máximas de 20 pregões, ações sobrevendidas, distribuição por estágio e a leitura do Ibovespa nas três etapas. Resume em uma fase: queda aberta, fundo em formação, reversão em curso ou tendência saudável.
+
+A página abre sozinha na lista mais útil do dia: Oportunidades, depois Reversão ou Líderes se o mercado estiver defensivo.
+
+**Checklist do setup.** Cada ação mostra 12 condições (tendência, pullback, MACD e gatilho). O MACD entra como confirmação e não como exigência: ele atrasa e costuma estar negativo justamente no suporte.
+
+**Projeção por cenários.** Faixas de preço em 10, 20 e 30 pregões (percentis 10, 50 e 90 dos retornos reais do papel nos últimos 3 anos) e a frequência com que o papel chegou ao alvo ou ao stop com a mesma distância do plano, entrando em qualquer dia. É base histórica, não previsão.
+
+Ajustes ficam no topo do `b3_core.py` (`REV_QUEDA_MIN`, `REV_RR_MIN`, `LIDER_FR_MIN`, `PROJ_HORIZONTES`...).
 
 ## Passo a passo (cerca de 10 minutos)
 

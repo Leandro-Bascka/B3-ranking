@@ -33,6 +33,12 @@ def _plano_rr(plano):
     return f"{plano['rr']:.1f}" if isinstance(plano, dict) else "-"
 
 
+def _rev_txt(rev, ok):
+    if not isinstance(rev, dict) or rev["estagio"] in ("SEM QUEDA", "RECUPERADA"):
+        return "-"
+    return rev["estagio"] + (" *" if ok else "")
+
+
 def criar_figura(df, acao, plano=None, fib=None, dias_projecao=15):
     """Candles + EMAs + volume. Com plano/Fibonacci, projeta os níveis à direita do último candle."""
     cols = ["Open", "High", "Low", "Close", "Volume", "EMA9", "EMA21", "EMA50", "EMA200"]
@@ -164,7 +170,7 @@ class ScannerApp:
         frame_left = ttk.Frame(paned)
         paned.add(frame_left, weight=3)
 
-        cols = ("AÇÃO", "SCORE", "TEC", "VAL", "SINAL", "OPORT.", "ESTÁGIO", "PB", "G/R", "SETUP",
+        cols = ("AÇÃO", "SCORE", "TEC", "VAL", "SINAL", "OPORT.", "ESTÁGIO", "PB", "G/R", "REVERSÃO", "LÍDER", "SETUP",
                 "PREÇO", "RSI", "ADX", "VOL", "P/L", "P/VP", "DY%", "BETA", "TENDÊNCIA")
         self.tree = ttk.Treeview(frame_left, columns=cols, show="headings", height=24)
 
@@ -172,7 +178,7 @@ class ScannerApp:
             "AÇÃO": 70, "SCORE": 52, "TEC": 45, "VAL": 45, "SINAL": 150, "SETUP": 130,
             "PREÇO": 68, "RSI": 48, "ADX": 48, "VOL": 55, "P/L": 50, "P/VP": 50,
             "DY%": 50, "BETA": 48, "TENDÊNCIA": 88,
-            "OPORT.": 58, "ESTÁGIO": 105, "PB": 40, "G/R": 45,
+            "OPORT.": 58, "ESTÁGIO": 105, "PB": 40, "G/R": 45, "REVERSÃO": 110, "LÍDER": 50,
         }
         for col in cols:
             self.tree.heading(col, text=col)
@@ -337,6 +343,8 @@ class ScannerApp:
                 row["ESTAGIO"],
                 _fmt(row["PB_SCORE"], "{:.0f}"),
                 _plano_rr(row["PLANO"]),
+                _rev_txt(row["REV"], row["REV_OK"]),
+                "SIM" if (isinstance(row["LIDER"], dict) and row["LIDER"]["ok"]) else "-",
                 row["SETUP"],
                 f"{row['PREÇO']:.2f}",
                 f"{row['RSI']:.1f}",
@@ -361,7 +369,10 @@ class ScannerApp:
             return
         try:
             # ';' e vírgula decimal para abrir direto no Excel em português
-            saida = self.ranking.drop(columns=["FIB", "PLANO", "HIST_PB"], errors="ignore").copy()
+            saida = self.ranking.drop(columns=["FIB", "PLANO", "HIST_PB", "REV", "PLANO_REV", "LIDER", "CHECK", "PROJ"],
+                                      errors="ignore").copy()
+            saida["REV_ESTAGIO"] = self.ranking["REV"].map(lambda r: r["estagio"] if isinstance(r, dict) else None)
+            saida["LIDER_FR"] = self.ranking["LIDER"].map(lambda r: r["ok"] if isinstance(r, dict) else None)
             for k in ("entrada", "stop", "alvo", "alvo2", "rr"):
                 saida["PLANO_" + k.upper()] = self.ranking["PLANO"].map(
                     lambda p, k=k: p[k] if isinstance(p, dict) else None)
@@ -396,6 +407,22 @@ class ScannerApp:
         if hist:
             linhas_pb += (f"Histórico do setup: {hist['n']} ocorrências, acerto {hist['taxa']:.0f}% "
                           f"(alvo de 2x o risco em {HIST_HORIZONTE} pregões), esperança {hist['esperanca_r']:+.2f}R\n")
+        rev = row["REV"] if isinstance(row["REV"], dict) else None
+        if rev and rev["estagio"] != "SEM QUEDA":
+            linhas_pb += (f"Reversão: {rev['estagio']}   nota {_fmt(rev['score'], '{:.0f}')}/100   "
+                          f"queda de {_fmt(rev['queda_pct'], '{:.1f}')}% da máxima   fundo há {rev['idade_fundo']} pregões   "
+                          f"confirmações {rev['n_conf']}/5\n")
+            pr = row["PLANO_REV"] if isinstance(row["PLANO_REV"], dict) else None
+            if pr:
+                linhas_pb += (f"Plano da reversão: entrada {pr['entrada']:.2f}   stop {pr['stop']:.2f} (-{pr['risco_pct']:.1f}%)   "
+                              f"alvo 1 {pr['alvo']:.2f} ({pr['alvo_tipo']})   alvo 2 {pr['alvo2']:.2f}   ganho/risco {pr['rr']:.1f}\n")
+        lid = row["LIDER"] if isinstance(row["LIDER"], dict) else None
+        if lid and lid["ok"]:
+            linhas_pb += f"Líder de força relativa: SIM (20 pregões: {_fmt(lid['fr20'], '{:+.1f}')} p.p.)\n"
+        proj = row["PROJ"] if isinstance(row["PROJ"], dict) else None
+        if proj and proj.get("horizontes"):
+            faixas = "   ".join(f"{x['dias']}d: {x['p10_pct']:+.1f}% a {x['p90_pct']:+.1f}%" for x in proj["horizontes"])
+            linhas_pb += f"Faixa histórica (percentis 10 a 90): {faixas}\n"
         texto = (
             f"{acao}  |  Score final: {row['SCORE']:.0f}  (Técnica {row['SCORE_TEC']:.0f} | "
             f"Valor {_fmt(row['SCORE_VAL'], '{:.0f}')} | Ajuste cenário {row['AJUSTE_CENARIO']:+d})  |  {row['SINAL']}\n"

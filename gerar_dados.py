@@ -128,6 +128,15 @@ def montar_acao(r):
         "op_notas": lista(r["OP_NOTAS"]),
         "pb_motivos": lista(r["PB_MOTIVOS"]),
         "novo_hoje": False,
+        # reversão, líderes, checklist e projeção (V3.2)
+        "rev": r["REV"] if isinstance(r["REV"], dict) else None,
+        "plano_rev": r["PLANO_REV"] if isinstance(r["PLANO_REV"], dict) else None,
+        "reversao": bool(r["REV_OK"]),
+        "rev_notas": lista(r["REV_NOTAS"]),
+        "lider": r["LIDER"] if isinstance(r["LIDER"], dict) else None,
+        "check": r["CHECK"] if isinstance(r["CHECK"], list) else [],
+        "macd_gatilho": bool(r["MACD_GATILHO"]),
+        "proj": r["PROJ"] if isinstance(r["PROJ"], dict) else None,
         "grafico": grafico,
     }
 
@@ -209,7 +218,7 @@ def main(saida=SAIDA):
         }
 
     dados = {
-        "versao": "3.1",
+        "versao": "3.2",
         "gerado_em": datetime.datetime.now(FUSO).isoformat(timespec="minutes"),
         "data_pregao": data_pregao,
         "regime": regime_json,
@@ -223,6 +232,23 @@ def main(saida=SAIDA):
         for a in dados["acoes"]:
             a["novo_hoje"] = bool(a["oportunidade"] and a["acao"] not in ops_ant)
     dados["n_oportunidades"] = sum(1 for a in dados["acoes"] if a["oportunidade"])
+    dados["n_reversoes"] = sum(1 for a in dados["acoes"] if a["reversao"])
+    dados["n_lideres"] = sum(1 for a in dados["acoes"] if a["lider"] and a["lider"]["ok"])
+    try:
+        dados["termometro"] = core.termometro_mercado(regime, resultados)
+    except Exception as e:  # o termômetro nunca deve derrubar a geração do ranking
+        print(f"AVISO: termômetro indisponível ({e})")
+        dados["termometro"] = None
+    # modo do dia: o que a página mostra primeiro
+    defensivo = bool(regime_json and regime_json["nome"] in ("CAUTELA", "RISK-OFF"))
+    if dados["n_oportunidades"] > 0:
+        dados["modo"] = {"filtro": "oportunidades", "ordem": "op_score"}
+    elif defensivo and dados["n_reversoes"] > 0:
+        dados["modo"] = {"filtro": "reversao", "ordem": "rev_score"}
+    elif defensivo and dados["n_lideres"] > 0:
+        dados["modo"] = {"filtro": "lideres", "ordem": "lider_score"}
+    else:
+        dados["modo"] = {"filtro": "todos", "ordem": "score"}
 
     escrever_json(os.path.join(saida, "data.json"), dados)
 
@@ -230,6 +256,8 @@ def main(saida=SAIDA):
         "acao": a["acao"], "preco": a["preco"], "score": a["score"],
         "score_tec": a["score_tec"], "score_val": a["score_val"], "sinal": a["sinal"],
         "op": a["oportunidade"], "estagio": a["estagio"], "pb_score": a["pb_score"],
+        "rev": (a["rev"] or {}).get("estagio"), "rev_ok": a["reversao"],
+        "lider": bool(a["lider"] and a["lider"]["ok"]),
         "regime": regime_json["nome"] if regime_json else None,
     } for a in dados["acoes"]]
     if data_pregao:

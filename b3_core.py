@@ -1180,6 +1180,396 @@ def avaliar_oportunidade(estagio, pb_score, plano, tendencia, close, ema200, sco
 
 
 # ==============================================================================
+# V3.2: REVERSÃO, CHECKLIST, LÍDERES DE FORÇA RELATIVA, PROJEÇÃO E TERMÔMETRO
+# ==============================================================================
+
+REV_JANELA_ALTO = 60            # a queda é medida a partir da máxima destes últimos pregões
+REV_QUEDA_MIN = 15.0            # queda mínima (%) para a ação entrar no radar de reversão
+REV_RSI_SOBREVENDA = 30
+REV_VOL_PICO = 1.8              # volume relativo que marca capitulação
+REV_ATR_EXPANSAO = 1.3          # ATR% atual / mediana de 120 pregões
+REV_DIST_EMA50 = -8.0           # distância (%) abaixo da EMA50 que marca esticamento
+REV_FUNDO_MIN_IDADE = 3         # pregões desde a mínima para considerar que o fundo "segurou"
+REV_FUNDO_MAX_IDADE = 25
+REV_RECUP_MAX = 0.618           # acima disso a queda já foi recuperada: tarde para o radar
+REV_ALVO_MIN_PCT = 4.0          # alvo 1 precisa estar a pelo menos 4% do preço
+REV_RR_MIN = 2.0
+REV_RR_MIN_DEFENSIVO = 3.0
+LIDER_FR_MIN = 3.0              # p.p. de força relativa (60 pregões) contra o Ibovespa
+LIDER_FR20_MIN = 2.0            # idem, 20 pregões
+LIDER_DD_MAX = 10.0             # no máximo 10% abaixo da máxima de 60 pregões
+PROJ_HORIZONTES = (10, 20, 30)
+PROJ_JANELA = 750               # pregões de histórico usados na projeção
+
+ESTAGIOS_REV_RADAR = ("ESTABILIZANDO", "CONFIRMANDO", "CONFIRMADA")
+
+
+def _f(x, casas=2):
+    """float arredondado, ou None se NaN/inexistente (seguro para JSON)."""
+    try:
+        if x is None or pd.isna(x):
+            return None
+        return float(round(float(x), casas))
+    except Exception:
+        return None
+
+
+def avaliar_reversao(df):
+    """
+    Reversão em três etapas: CAPITULAÇÃO (queda esticada, volume e volatilidade em pico),
+    ESTABILIZAÇÃO (o fundo segura, sem nova mínima) e CONFIRMAÇÃO (médias curtas, MACD e volume).
+    Estágios: SEM QUEDA, EM QUEDA, CAPITULAÇÃO, ESTABILIZANDO, CONFIRMANDO, CONFIRMADA, RECUPERADA.
+    Aceita df sem volume (usado no Ibovespa): as verificações de volume são ignoradas.
+    """
+    base = {"estagio": "SEM QUEDA", "score": None, "sinais": [], "queda_pct": None, "fundo": None,
+            "alto": None, "idade_fundo": None, "recuperado_pct": None, "n_conf": 0, "n_cap": 0}
+    if len(df) < 80:
+        return base
+
+    ult = df.iloc[-1]
+    alto = float(df.tail(REV_JANELA_ALTO + 1)["High"].max())
+    jan = df.tail(REV_FUNDO_MAX_IDADE + 1)
+    fundo = float(jan["Low"].min())
+    pos_fundo = int(np.argmin(jan["Low"].values))
+    idade = len(jan) - 1 - pos_fundo
+    close = float(ult["Close"])
+    amp = alto - fundo
+    if alto <= 0 or amp <= 0:
+        return base
+    queda = amp / alto * 100
+    # janela de capitulação: em torno do fundo (até 30 pregões), e não só os últimos 10
+    ult10 = df.tail(min(30, max(10, idade + 6)))
+    rsi_min = float(ult10["RSI"].min())
+
+    contexto = queda >= REV_QUEDA_MIN or (rsi_min < REV_RSI_SOBREVENDA and close < float(ult["EMA50"]))
+    base.update({"queda_pct": _f(queda, 1), "fundo": _f(fundo), "alto": _f(alto), "idade_fundo": idade})
+    if not contexto:
+        return base
+
+    recup = (close - fundo) / amp
+    base["recuperado_pct"] = _f(recup * 100, 0)
+
+    # ---- capitulação (últimos 10 pregões)
+    sinais, pts, tot = [], 0.0, 0.0
+
+    def item(grupo, texto, ok, peso):
+        nonlocal pts, tot
+        if ok is None:
+            return
+        sinais.append({"grupo": grupo, "texto": texto, "ok": bool(ok)})
+        tot += peso
+        pts += peso if ok else 0
+
+    dist_min = float(ult10["DIST_EMA50"].min())
+    vol_max = ult10["VOL_REL"].max()
+    atr_pct = df["ATR_PCT"]
+    atr_ref = float(atr_pct.tail(120).median()) if len(atr_pct) >= 120 else np.nan
+    atr_pico = float(ult10["ATR_PCT"].max())
+
+    item("Capitulação", f"RSI abaixo de {REV_RSI_SOBREVENDA} perto do fundo (mín. {rsi_min:.0f})",
+         rsi_min < REV_RSI_SOBREVENDA, 6)
+    item("Capitulação", "Volume em pico (acima de 1,8x a média)",
+         None if pd.isna(vol_max) else bool(vol_max >= REV_VOL_PICO), 5)
+    item("Capitulação", "Volatilidade em expansão (ATR acima de 1,3x o normal)",
+         None if (pd.isna(atr_ref) or atr_ref <= 0) else bool(atr_pico / atr_ref >= REV_ATR_EXPANSAO), 4)
+    item("Capitulação", f"Preço esticado abaixo da EMA50 (até {dist_min:.0f}%)",
+         bool(dist_min <= REV_DIST_EMA50), 5)
+    n_cap = sum(1 for s in sinais if s["grupo"] == "Capitulação" and s["ok"])
+
+    # ---- estabilização
+    fundo_seguro = idade >= REV_FUNDO_MIN_IDADE
+    item("Estabilização", f"Fundo segurou há {idade} pregões, sem nova mínima", fundo_seguro, 8)
+    item("Estabilização", "Recuperou pelo menos 3% desde o fundo", bool(close / fundo - 1 >= 0.03), 8)
+
+    anterior = df.iloc[max(0, len(df) - len(jan) - 45): max(0, len(df) - len(jan) - 5)]
+    ok_div = None
+    txt_div = "Fundo mais alto, duplo fundo ou divergência de alta no RSI"
+    if len(anterior) >= 10:
+        pos_ant = int(np.argmin(anterior["Low"].values))
+        low_ant = float(anterior["Low"].iloc[pos_ant])
+        rsi_ant = float(anterior["RSI"].iloc[pos_ant])
+        rsi_fundo = float(jan["RSI"].iloc[pos_fundo])
+        if fundo >= low_ant * 0.98:
+            ok_div = True
+            txt_div = "Fundo mais alto ou duplo fundo em relação ao anterior"
+        elif rsi_fundo > rsi_ant:
+            ok_div = True
+            txt_div = "Divergência de alta no RSI (preço fez mínima menor, RSI não)"
+        else:
+            ok_div = False
+    item("Estabilização", txt_div, ok_div, 12)
+
+    # ---- confirmação
+    ant, ant2 = df.iloc[-2], df.iloc[-3]
+    hist_sobe = bool(ult["MACD_HIST"] > ant["MACD_HIST"] > ant2["MACD_HIST"])
+    c = [
+        ("Fechou acima da EMA9", close > float(ult["EMA9"]), 8),
+        ("Fechou acima da EMA21", close > float(ult["EMA21"]), 8),
+        ("Histograma do MACD subindo há 2 pregões", hist_sobe, 12),
+        ("MACD acima da linha de sinal", bool(ult["MACD"] > ult["MACD_SIGNAL"]), 8),
+    ]
+    ult5 = df.tail(5)
+    altas = ult5[ult5["Close"] > ult5["Close"].shift(1).fillna(ult5["Close"])]
+    vol_alta = altas["VOL_REL"].mean() if len(altas) else np.nan
+    c.append(("Volume nos dias de alta acima da média",
+              None if pd.isna(vol_alta) else bool(vol_alta >= 1.0), 8))
+    for texto, ok, peso in c:
+        item("Confirmação", texto, ok, peso)
+    item("Confirmação", "Recuperou a EMA50", bool(close > float(ult["EMA50"])), 8)
+    n_conf = sum(1 for s in sinais if s["grupo"] == "Confirmação" and s["ok"] and s["texto"] != "Recuperou a EMA50")
+
+    higher_low = bool(float(df.tail(3)["Low"].min()) > fundo * 1.003)
+    if recup > REV_RECUP_MAX:
+        estagio = "RECUPERADA"
+    elif not fundo_seguro:
+        estagio = "CAPITULAÇÃO" if n_cap >= 2 else "EM QUEDA"
+    elif n_conf >= 4 and higher_low:
+        estagio = "CONFIRMADA"
+    elif n_conf >= 3:
+        estagio = "CONFIRMANDO"
+    else:
+        estagio = "ESTABILIZANDO"
+
+    score = int(round(pts / tot * 100)) if tot > 0 else None
+    base.update({"estagio": estagio, "score": score, "sinais": sinais, "n_conf": n_conf, "n_cap": n_cap})
+    return base
+
+
+def montar_plano_reversao(df, rev):
+    """Plano da reversão: stop abaixo do fundo; alvos nos níveis de recuperação da queda."""
+    if rev["estagio"] not in ESTAGIOS_REV_RADAR or rev["fundo"] is None:
+        return None
+    ult = df.iloc[-1]
+    close = float(ult["Close"])
+    atr = float(ult["ATR"]) if _valido(ult["ATR"]) else 0.0
+    fundo, alto = rev["fundo"], rev["alto"]
+    # stop abaixo da menor mínima dos últimos 8 pregões (nunca abaixo do fundo menos 0,5 ATR)
+    stop = max(float(df.tail(8)["Low"].min()), fundo) - 0.5 * atr
+    risco = close - stop
+    amp = alto - fundo
+    if risco <= 0 or amp <= 0:
+        return None
+    niveis = [(0.382, "38,2% da queda"), (0.5, "50% da queda"), (0.618, "61,8% da queda"),
+              (0.786, "78,6% da queda"), (1.0, "máxima anterior")]
+    cand = [(fundo + k * amp, nome) for k, nome in niveis if fundo + k * amp >= close * (1 + REV_ALVO_MIN_PCT / 100)]
+    if not cand:
+        return None
+    alvo, tipo = cand[0]
+    alvo2 = cand[1][0] if len(cand) > 1 else alvo + 0.272 * amp
+    risco_pct = risco / close * 100
+    return {
+        "entrada": _f(close), "stop": _f(stop), "alvo": _f(alvo), "alvo2": _f(alvo2), "alvo_tipo": tipo,
+        "risco_pct": _f(risco_pct, 1), "ganho_pct": _f((alvo / close - 1) * 100, 1),
+        "ganho2_pct": _f((alvo2 / close - 1) * 100, 1), "rr": _f((alvo - close) / risco, 2),
+        "valido": bool(risco_pct <= STOP_MAX_PCT),
+    }
+
+
+def avaliar_reversao_op(rev, plano, regime_nome):
+    """Reversão aproveitável: confirmando/confirmada, plano válido e ganho/risco suficiente."""
+    rr_min = REV_RR_MIN_DEFENSIVO if regime_nome in ("RISK-OFF", "CAUTELA") else REV_RR_MIN
+    falta, ok_n = [], []
+    if rev["estagio"] in ("CONFIRMANDO", "CONFIRMADA"):
+        ok_n.append(f"Reversão {rev['estagio'].lower()} ({rev['n_conf']} de 5 confirmações)")
+    elif rev["estagio"] == "ESTABILIZANDO":
+        falta.append("Fundo ainda sem confirmação: manter em observação")
+    elif rev["estagio"] in ("EM QUEDA", "CAPITULAÇÃO"):
+        falta.append("Ainda fazendo mínimas: esperar o fundo segurar")
+    elif rev["estagio"] == "RECUPERADA":
+        falta.append("Queda já recuperada em boa parte: tarde para a reversão")
+    else:
+        falta.append("Sem queda relevante para reverter")
+    if plano is None:
+        falta.append("Sem plano calculável")
+    else:
+        if not plano["valido"]:
+            falta.append(f"Stop distante demais ({plano['risco_pct']:.1f}% do preço)")
+        if plano["rr"] >= rr_min:
+            ok_n.append(f"Ganho/risco de {plano['rr']:.1f} para 1")
+        else:
+            falta.append(f"Ganho/risco de {plano['rr']:.1f} para 1, abaixo do mínimo de {rr_min:.0f} para 1")
+    ok = not falta
+    return ok, (ok_n if ok else [f"Falta: {f}" for f in falta])
+
+
+def avaliar_lider(df, ibov_close, tendencia, fr):
+    """Líder de força relativa: segura preço e supera o Ibovespa quando o mercado cai."""
+    if ibov_close is None or not _valido(fr):
+        return None
+    atual = df.iloc[-1]
+    close = float(atual["Close"])
+    fr20 = np.nan
+    try:
+        comum = df["Close"].index.intersection(ibov_close.index)
+        if len(comum) > 21:
+            a, i = df["Close"].loc[comum], ibov_close.loc[comum]
+            fr20 = ((a.iloc[-1] / a.iloc[-21]) - (i.iloc[-1] / i.iloc[-21])) * 100
+    except Exception:
+        pass
+    alto60 = float(df.tail(REV_JANELA_ALTO + 1)["High"].max())
+    dd = (alto60 - close) / alto60 * 100
+    cond = [
+        (f"Força relativa de {fr:+.1f} p.p. em 60 pregões (mín. {LIDER_FR_MIN:.0f})", fr >= LIDER_FR_MIN),
+        (f"Força relativa de {fr20:+.1f} p.p. em 20 pregões (mín. {LIDER_FR20_MIN:.0f})",
+         _valido(fr20) and fr20 >= LIDER_FR20_MIN),
+        ("Preço acima da EMA200", close > float(atual["EMA200"])),
+        ("Preço acima da EMA50", close > float(atual["EMA50"])),
+        (f"A {dd:.1f}% da máxima de 60 pregões (máx. {LIDER_DD_MAX:.0f}%)", dd <= LIDER_DD_MAX),
+        ("Tendência diferente de baixa", tendencia != "BAIXA"),
+    ]
+    ok = all(c[1] for c in cond)
+    score = max(0, min(100, 40 + 2 * fr + (2 * fr20 if _valido(fr20) else 0)))
+    return {"ok": bool(ok), "score": int(round(score)), "fr20": _f(fr20, 1), "dd60": _f(dd, 1),
+            "notas": [("OK: " if c[1] else "Falta: ") + c[0] for c in cond]}
+
+
+def montar_checklist(df, av, fib):
+    """Condições do setup de pullback em tendência de alta, visíveis uma a uma."""
+    a, p = df.iloc[-1], df.iloc[-2]
+    close = float(a["Close"])
+    vol5 = df.tail(5)["VOL_REL"].mean()
+    itens = [
+        ("Tendência", "Preço acima da EMA200", close > float(a["EMA200"])),
+        ("Tendência", "EMA50 acima da EMA200", bool(a["EMA50"] > a["EMA200"])),
+        ("Tendência", "EMA200 subindo (30 pregões)", bool(a["EMA200_UP"])),
+        ("Tendência", "EMA50 subindo (10 pregões)", bool(a["EMA50_UP"])),
+        ("Pullback", "Recuo na zona 38,2% a 61,8% de Fibonacci",
+         bool(av["estagio"] in ("NO SUPORTE", "RETOMANDO") and fib is not None)),
+        ("Pullback", "Volume secando durante o recuo", None if pd.isna(vol5) else bool(vol5 < 1.0)),
+        ("Pullback", "RSI em zona de repouso (35 a 55)", bool(35 <= float(a["RSI"]) <= 55)),
+        ("MACD", "MACD acima da linha de sinal", bool(a["MACD"] > a["MACD_SIGNAL"])),
+        ("MACD", "Histograma do MACD subindo", bool(a["MACD_HIST"] > p["MACD_HIST"])),
+        ("MACD", "MACD acima de zero", bool(a["MACD"] > 0)),
+        ("Gatilho", "Candle de confirmação (martelo ou engolfo)", bool(av["candle"])),
+        ("Gatilho", "Fechou acima da EMA9", close > float(a["EMA9"])),
+    ]
+    out = [{"grupo": g, "texto": t, "ok": bool(o)} for g, t, o in itens if o is not None]
+    macd_gatilho = bool(a["MACD_HIST"] > p["MACD_HIST"] and
+                        (a["MACD"] > a["MACD_SIGNAL"] or bool(df.tail(3)["CROSS_MACD"].any())))
+    return out, macd_gatilho
+
+
+def projecao_cenarios(df, plano):
+    """
+    Faixas de preço em 10, 20 e 30 pregões (percentis 10, 50 e 90 dos retornos reais do papel)
+    e, com plano, a frequência histórica de alvo/stop com a mesma geometria entrando em qualquer dia.
+    É base histórica, não previsão.
+    """
+    close = df["Close"]
+    ult = float(close.iloc[-1])
+    out = {"horizontes": [], "base": None, "janela": int(min(len(close), PROJ_JANELA))}
+    logc = np.log(close.astype(float))
+    for h in PROJ_HORIZONTES:
+        lr = logc.diff(h).dropna().tail(PROJ_JANELA)
+        if len(lr) < 120:
+            continue
+        p10, p50, p90 = np.percentile(lr.values, [10, 50, 90])
+        out["horizontes"].append({
+            "dias": h,
+            "p10": _f(ult * np.exp(p10)), "p50": _f(ult * np.exp(p50)), "p90": _f(ult * np.exp(p90)),
+            "p10_pct": _f((np.exp(p10) - 1) * 100, 1), "p50_pct": _f((np.exp(p50) - 1) * 100, 1),
+            "p90_pct": _f((np.exp(p90) - 1) * 100, 1),
+        })
+    if plano and plano.get("risco_pct") and plano["risco_pct"] > 0:
+        H = HIST_HORIZONTE
+        c = close.values.astype(float)[-PROJ_JANELA - H:]
+        hi = df["High"].values.astype(float)[-PROJ_JANELA - H:]
+        lo = df["Low"].values.astype(float)[-PROJ_JANELA - H:]
+        if len(c) > H + 60:
+            n = len(c) - H
+            ent = c[:n]
+            idx = np.arange(1, H + 1)[None, :] + np.arange(n)[:, None]
+            jh, jl = hi[idx], lo[idx]
+            stop_l = (ent * (1 - plano["risco_pct"] / 100))[:, None]
+            r = {}
+            primeiro_stop = np.where((jl <= stop_l).any(axis=1), (jl <= stop_l).argmax(axis=1), H + 1)
+            for nome, g in (("alvo1", plano["ganho_pct"]), ("alvo2", plano["ganho2_pct"])):
+                alvo_l = (ent * (1 + g / 100))[:, None]
+                primeiro_alvo = np.where((jh >= alvo_l).any(axis=1), (jh >= alvo_l).argmax(axis=1), H + 1)
+                r[nome] = float(np.mean(primeiro_alvo < primeiro_stop) * 100)
+            p_stop = float(np.mean(primeiro_stop <= H) * 100)
+            out["base"] = {"n": int(n), "horizonte": H, "p_alvo1": _f(r["alvo1"], 0), "p_alvo2": _f(r["alvo2"], 0),
+                           "p_stop": _f(p_stop, 0)}
+    return out
+
+
+def termometro_mercado(regime, resultados):
+    """Amplitude do mercado e fase (queda aberta, fundo em formação, reversão em curso, tendência saudável)."""
+    dfs = [df for df in HIST_CACHE.values() if len(df) >= 210]
+    n = len(dfs)
+    if n < 10:
+        return None
+
+    def pct(cond):
+        return float(round(sum(1 for d in dfs if cond(d)) / n * 100, 1))
+
+    acima50 = pct(lambda d: d["Close"].iloc[-1] > d["EMA50"].iloc[-1])
+    acima200 = pct(lambda d: d["Close"].iloc[-1] > d["EMA200"].iloc[-1])
+    acima50_5d = pct(lambda d: d["Close"].iloc[-6] > d["EMA50"].iloc[-6])
+    acima50_20d = pct(lambda d: d["Close"].iloc[-21] > d["EMA50"].iloc[-21])
+    macd_pos = pct(lambda d: d["MACD"].iloc[-1] > d["MACD_SIGNAL"].iloc[-1])
+    sobrevend = pct(lambda d: d["RSI"].iloc[-1] < REV_RSI_SOBREVENDA)
+    min20 = sum(1 for d in dfs if d["Close"].iloc[-1] <= d["Close"].iloc[-21:-1].min())
+    max20 = sum(1 for d in dfs if d["Close"].iloc[-1] >= d["Close"].iloc[-21:-1].max())
+
+    est = {}
+    for r in resultados:
+        e = (r.get("REV") or {}).get("estagio")
+        if e:
+            est[e] = est.get(e, 0) + 1
+    n_conf = est.get("CONFIRMANDO", 0) + est.get("CONFIRMADA", 0)
+    n_estab = est.get("ESTABILIZANDO", 0)
+    n_queda = est.get("EM QUEDA", 0) + est.get("CAPITULAÇÃO", 0)
+    total_res = max(1, len(resultados))
+
+    ibov = None
+    ibov_dd = None
+    if regime is not None and regime.get("IBOV") is not None:
+        c = regime["IBOV"].astype(float).dropna()
+        d = pd.DataFrame({"Close": c})
+        d["Open"] = c.shift(1).fillna(c)
+        d["High"] = np.maximum(c, c.shift(1).fillna(c))
+        d["Low"] = np.minimum(c, c.shift(1).fillna(c))
+        d["Volume"] = np.nan
+        d = calcular_indicadores(d)
+        d = d.dropna(subset=["Close", "EMA9", "EMA21", "EMA50", "EMA200", "RSI", "MACD", "MACD_SIGNAL", "MACD_HIST", "ATR"])
+        if len(d) > 100:
+            ibov = avaliar_reversao(d)
+            ibov_dd = _f((float(d["Close"].iloc[-1]) / float(d["Close"].tail(252).max()) - 1) * 100, 1)
+
+    est_ibov = ibov["estagio"] if ibov else None
+    delta5 = round(acima50 - acima50_5d, 1)
+    if acima50 >= 60 and (est_ibov in (None, "SEM QUEDA", "RECUPERADA")):
+        fase = "TENDÊNCIA SAUDÁVEL"
+    elif est_ibov in ("CONFIRMANDO", "CONFIRMADA") or (n_conf / total_res >= 0.15 and delta5 > 0):
+        fase = "REVERSÃO EM CURSO"
+    elif est_ibov == "ESTABILIZANDO" or sobrevend >= 20 or (n_estab + n_conf) / total_res >= 0.15:
+        fase = "FUNDO EM FORMAÇÃO"
+    elif est_ibov in ("EM QUEDA", "CAPITULAÇÃO") or acima50 < 35:
+        fase = "QUEDA ABERTA"
+    else:
+        fase = "NEUTRO"
+
+    leitura = [
+        f"{acima50:.0f}% das ações acima da EMA50 ({delta5:+.0f} p.p. em 5 pregões) e {acima200:.0f}% acima da EMA200",
+        f"{min20} ações em mínima de 20 pregões contra {max20} em máxima",
+        f"{sobrevend:.0f}% das ações com RSI abaixo de {REV_RSI_SOBREVENDA}",
+        f"{n_conf} ações confirmando reversão, {n_estab} estabilizando e {n_queda} ainda fazendo mínimas",
+    ]
+    if ibov:
+        leitura.insert(0, f"Ibovespa: {ibov['estagio'].lower()}"
+                          + (f", {ibov['queda_pct']:.1f}% abaixo da máxima de 60 pregões" if ibov["queda_pct"] else ""))
+    return {
+        "n": n, "fase": fase, "acima_ema50": acima50, "acima_ema200": acima200, "delta_5d": delta5,
+        "delta_20d": round(acima50 - acima50_20d, 1), "macd_positivo": macd_pos, "sobrevendidas": sobrevend,
+        "novas_minimas": int(min20), "novas_maximas": int(max20),
+        "estagios": est, "ibov": ({k: ibov[k] for k in ("estagio", "score", "sinais", "queda_pct", "idade_fundo")}
+                                  if ibov else None),
+        "ibov_dd12m": ibov_dd, "leitura": leitura,
+    }
+
+
+# ==============================================================================
 # ANÁLISE DO ATIVO
 # ==============================================================================
 
@@ -1341,6 +1731,17 @@ def analisar_ativo(acao, liquidez, fund=None, regime=None):
                                + 0.3 * min(plano["rr"] / 4, 1) * 100
                                + 0.2 * final, 1))
 
+    # ---------------- NOVO (V3.2): reversão, checklist, líderes e projeção ----------------
+    ibov_c = regime["IBOV"] if regime else None
+    rev = avaliar_reversao(df)
+    plano_rev = montar_plano_reversao(df, rev)
+    rev_ok, rev_notas = avaliar_reversao_op(rev, plano_rev, nome_regime)
+    lider = avaliar_lider(df, ibov_c, tendencia, fr)
+    check, macd_gatilho = montar_checklist(df, av, fib)
+    plano_proj = plano_rev if (rev_ok and not oportunidade) else plano
+    proj = projecao_cenarios(df, plano_proj)
+    proj["plano"] = "reversão" if plano_proj is plano_rev and plano_rev else "pullback"
+
     return {
         "AÇÃO": acao,
         "PREÇO": atual["Close"],
@@ -1402,4 +1803,13 @@ def analisar_ativo(acao, liquidez, fund=None, regime=None):
         "OP_SCORE": op_score,
         "OP_NOTAS": " | ".join(op_notas),
         "PB_MOTIVOS": " | ".join(av["motivos"]),
+        # --- reversão, líderes, checklist e projeção (V3.2) ---
+        "REV": rev,
+        "PLANO_REV": plano_rev,
+        "REV_OK": bool(rev_ok),
+        "REV_NOTAS": " | ".join(rev_notas),
+        "LIDER": lider,
+        "CHECK": check,
+        "MACD_GATILHO": bool(macd_gatilho),
+        "PROJ": proj,
     }
