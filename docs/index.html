@@ -153,6 +153,25 @@ dt { color: var(--ink2); } dd { margin: 0; font-weight: 600; white-space: nowrap
 .hist { margin: 8px 0 0; font-size: 0.86rem; }
 .wide { grid-column: 1 / -1; }
 .chart .lbl { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; font-size: 9px; font-weight: 600; }
+.t-rev { color: var(--bg); background: var(--good); }
+.t-lid { color: var(--ink); background: var(--surface2); border: 1px solid var(--accent); }
+.termo .plan { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fold { border-top: 1px solid var(--line); padding-top: 6px; }
+.fold > summary { color: var(--accent); font-size: 0.86rem; font-weight: 600; cursor: pointer; }
+.fold[open] > summary { margin-bottom: 6px; }
+.termo .stat b { font-size: 1.05rem; white-space: nowrap; }
+.fases { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 10px 0 4px; background: var(--surface2); }
+.fases i { display: block; height: 100%; }
+.fases-leg { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.74rem; color: var(--ink2); }
+.fases-leg i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: baseline; }
+.check { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 0.86rem; }
+.check li { display: flex; gap: 8px; align-items: flex-start; }
+.check b { font-family: var(--mono); min-width: 1.4ch; }
+.check h5 { margin: 8px 0 2px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink2); }
+.proj { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.proj th, .proj td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.proj th:first-child, .proj td:first-child { text-align: left; }
+.proj th { color: var(--ink2); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .t-cit { color: var(--accent); background: var(--surface2); }
 .mc { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; }
 .mc > summary { font-weight: 650; }
@@ -179,6 +198,7 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
   </header>
 
   <section class="regime" id="regime" hidden></section>
+  <section class="regime termo" id="termo" hidden></section>
 
   <details class="mc" id="mc" hidden>
     <summary>Morning Call <span class="mc-status" id="mcStatus"></span></summary>
@@ -200,6 +220,8 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
         <option value="score">Score final</option>
         <option value="op_score">Oportunidade</option>
         <option value="pb_score">Qualidade do pullback</option>
+        <option value="rev_score">Reversão</option>
+        <option value="lider_score">Líder de força relativa</option>
         <option value="score_tec">Técnica</option>
         <option value="score_val">Valor</option>
         <option value="dy">Dividendos</option>
@@ -214,7 +236,7 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
   <div class="msg" id="msg">Carregando ranking…</div>
 
   <footer>
-    Triagem automática por regras (técnica, valor, cenário de mercado, pullback e Fibonacci). Entrada, stop e alvos saem de fórmulas e não são ordem de compra. Não é recomendação de
+    Triagem automática por regras (técnica, valor, cenário, pullback, Fibonacci e reversão). Entrada, stop, alvos e projeções saem de fórmulas e do histórico do papel, e não são recomendação nem ordem de compra. Não é recomendação de
     investimento: confira os fundamentos e o seu perfil antes de qualquer operação. Preços e
     fundamentos vêm de fontes públicas (Yahoo Finance, Fundamentus, Banco Central) e podem ter atraso ou erros.
   </footer>
@@ -237,9 +259,12 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     "CAUTELA": { tom: "wait", texto: "Mercado em cautela" },
     "RISK-OFF": { tom: "bad", texto: "Mercado defensivo" }
   };
+  var RADAR = ["ESTABILIZANDO", "CONFIRMANDO", "CONFIRMADA"];
   var FILTROS = [
     { id: "todos", rotulo: "Todos", ok: function () { return true; } },
     { id: "oportunidades", rotulo: "Oportunidades", ok: function (a) { return !!a.oportunidade; } },
+    { id: "reversao", rotulo: "Reversão", ok: function (a) { return !!a.rev && RADAR.indexOf(a.rev.estagio) !== -1; } },
+    { id: "lideres", rotulo: "Líderes", ok: function (a) { return !!a.lider && !!a.lider.ok; } },
     { id: "entrada", rotulo: "Entrada", ok: function (a) { return a.sinal.indexOf("ENTRADA") === 0; } },
     { id: "aguardar", rotulo: "Aguardar", ok: function (a) { return a.sinal.indexOf("AGUARDAR") === 0; } },
     { id: "evitar", rotulo: "Evitar", ok: function (a) { return a.sinal === "EVITAR"; } },
@@ -254,7 +279,7 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     if (attrs) Object.keys(attrs).forEach(function (k) {
       if (k === "class") el.className = attrs[k];
       else if (k === "text") el.textContent = attrs[k];
-      else el.setAttribute(k, attrs[k]);
+      else if (attrs[k] !== null && attrs[k] !== undefined) el.setAttribute(k, attrs[k]);
     });
     (filhos || []).forEach(function (f) {
       if (f == null) return;
@@ -314,10 +339,21 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     box.hidden = false;
   }
 
+  /* ---------- plano em uso: pullback ou reversão ---------- */
+  function planoAtivo(a) {
+    if (a.oportunidade && a.plano) return a.plano;
+    if (a.rev && RADAR.indexOf(a.rev.estagio) !== -1 && a.plano_rev) return a.plano_rev;
+    return a.plano || null;
+  }
+  function planoDoTipo(a) {
+    var p = planoAtivo(a);
+    return { p: p, tipo: (p && p === a.plano_rev && p !== a.plano) ? "reversão" : "pullback" };
+  }
+
   /* ---------- gráfico (SVG) ---------- */
   function renderGrafico(g, a) {
     if (!g || !g.close || g.close.length < 2) return h("div", { class: "sub", text: "Gráfico indisponível." });
-    var plano = a && a.plano, fib = a && a.fib;
+    var plano = a && planoAtivo(a), fib = (a && plano && plano === a.plano) ? a.fib : null;
     var proj = (plano || fib) ? 100 : 0;          // faixa à direita da última vela, para projetar os níveis
     var W = 360, H = 250, ml = 6, mr = 46, mt = 8, mb = 18;
     var n = g.close.length;
@@ -447,9 +483,12 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
 
   function subtitulo(a) {
     var partes = ["R$ " + fmt(a.preco, 2)];
-    partes.push(a.estagio && a.estagio !== "SEM PULLBACK" ? cap(a.estagio) : cap(a.setup));
+    var emReversao = a.rev && ["SEM QUEDA", "RECUPERADA"].indexOf(a.rev.estagio) === -1 && !(a.estagio && ["NO SUPORTE", "RETOMANDO"].indexOf(a.estagio) !== -1);
+    if (emReversao) partes.push("reversão: " + a.rev.estagio.toLowerCase());
+    else partes.push(a.estagio && a.estagio !== "SEM PULLBACK" ? cap(a.estagio) : cap(a.setup));
     partes.push("tendência " + (a.tendencia || "—").toLowerCase());
-    if (a.oportunidade && a.plano) partes.push("ganho/risco " + fmt(a.plano.rr, 1) + ":1");
+    var pl = planoDoTipo(a).p;
+    if ((a.oportunidade || a.reversao) && pl) partes.push("ganho/risco " + fmt(pl.rr, 1) + ":1");
     return partes.join(" · ");
   }
 
@@ -466,10 +505,11 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
   }
 
   function blocoPlano(a) {
-    var p = a.plano;
+    var pt = planoDoTipo(a), p = pt.p;
     if (!p) return null;
+    var rev = pt.tipo === "reversão";
     return h("div", null, [
-      h("h3", { text: "Plano da operação" }),
+      h("h3", { text: rev ? "Plano da reversão" : "Plano da operação" }),
       h("div", { class: "plan" }, [
         caixa("Entrada", "R$ " + fmt(p.entrada, 2)),
         caixa("Stop", "R$ " + fmt(p.stop, 2), "neg", "−" + fmt(p.risco_pct, 1, "%")),
@@ -479,7 +519,8 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
       ]),
       h("p", { class: "note", text:
         (p.valido ? "" : "Stop distante: o risco passa de 10% do preço. ") +
-        "Calculado por regra: stop abaixo da menor mínima de 10 pregões e do nível de Fibonacci logo abaixo, menos 0,5 ATR. Não é ordem de compra." })
+        (rev ? "Calculado por regra: stop abaixo da menor mínima de 8 pregões (e do fundo), menos 0,5 ATR; alvos nos níveis de recuperação da queda. Não é ordem de compra."
+             : "Calculado por regra: stop abaixo da menor mínima de 10 pregões e do nível de Fibonacci logo abaixo, menos 0,5 ATR. Não é ordem de compra.") })
     ]);
   }
 
@@ -508,6 +549,151 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     return h("div", null, [h("h3", { text: "Pullback e Fibonacci" }), h("dl", null, linhas), h("p", { class: "hist", text: txt })]);
   }
 
+  var TOM_GRUPO = { "Capitulação": "Capitulação", "Estabilização": "Estabilização", "Confirmação": "Confirmação" };
+
+  function listaSinais(sinais) {
+    var grupos = [], mapa = {};
+    (sinais || []).forEach(function (x) {
+      if (!mapa[x.grupo]) { mapa[x.grupo] = []; grupos.push(x.grupo); }
+      mapa[x.grupo].push(x);
+    });
+    var itens = [];
+    grupos.forEach(function (g) {
+      itens.push(h("h5", { text: g }));
+      mapa[g].forEach(function (x) {
+        itens.push(h("li", null, [
+          h("b", { class: x.ok ? "pos" : "neg", text: x.ok ? "✓" : "✗" }),
+          h("span", { text: x.texto })
+        ]));
+      });
+    });
+    return h("ul", { class: "check" }, itens);
+  }
+
+  function blocoChecklist(a) {
+    if (!a.check || !a.check.length) return null;
+    var n = a.check.filter(function (x) { return x.ok; }).length;
+    return h("details", { class: "fold" }, [
+      h("summary", { text: "Checklist do setup de pullback (" + n + " de " + a.check.length + ")" }),
+      listaSinais(a.check),
+      h("p", { class: "note", text: a.macd_gatilho
+        ? "O MACD já virou para cima: serve de gatilho de confirmação."
+        : "O MACD ainda não virou. Ele atrasa e costuma estar negativo no suporte; use como confirmação, não como exigência." })
+    ]);
+  }
+
+  function blocoReversao(a) {
+    var r = a.rev;
+    if (!r || r.estagio === "SEM QUEDA") return null;
+    var linhas = [par("Estágio", cap(r.estagio)), par("Nota", ok(r.score) ? fmt(r.score, 0) + "/100" : "—")];
+    if (ok(r.queda_pct)) linhas.push(parW("Queda desde a máxima de 60 pregões", fmt(r.queda_pct, 1, "%")));
+    if (ok(r.idade_fundo)) linhas.push(parW("Fundo", "R$ " + fmt(r.fundo, 2) + " há " + r.idade_fundo + " pregões"));
+    if (ok(r.recuperado_pct)) linhas.push(parW("Já recuperou da queda", fmt(r.recuperado_pct, 0, "%")));
+    var filhos = [h("h3", { text: "Radar de reversão" }), h("dl", null, linhas)];
+    if (a.rev_notas && a.rev_notas.length) filhos.push(h("p", { class: "note", text: a.rev_notas.join(" · ") }));
+    filhos.push(h("details", { class: "fold" }, [
+      h("summary", { text: "As três etapas: capitulação, estabilização, confirmação" }),
+      listaSinais(r.sinais)
+    ]));
+    return h("div", null, filhos);
+  }
+
+  function blocoLider(a) {
+    var l = a.lider;
+    if (!l || (!l.ok && !(estado.dados.regime && ["CAUTELA", "RISK-OFF"].indexOf(estado.dados.regime.nome) !== -1))) return null;
+    return h("details", { class: "fold", open: l.ok ? "" : null }, [
+      h("summary", { text: l.ok ? "Líder de força relativa" : "Força relativa contra o Ibovespa" }),
+      h("ul", { class: "check" }, l.notas.map(function (t) {
+        var bom = t.indexOf("OK: ") === 0;
+        return h("li", null, [h("b", { class: bom ? "pos" : "neg", text: bom ? "✓" : "✗" }), h("span", { text: t.replace(/^(OK|Falta): /, "") })]);
+      }))
+    ]);
+  }
+
+  function blocoProjecao(a) {
+    var p = a.proj;
+    if (!p || !p.horizontes || !p.horizontes.length) return null;
+    var linhas = p.horizontes.map(function (x) {
+      return h("tr", null, [
+        h("td", { text: x.dias + " pregões" }),
+        h("td", { class: "num " + (x.p10_pct < 0 ? "neg" : "pos"), text: sinalFmt(x.p10_pct, 1) + "%" }),
+        h("td", { class: "num", text: sinalFmt(x.p50_pct, 1) + "%" }),
+        h("td", { class: "num " + (x.p90_pct < 0 ? "neg" : "pos"), text: sinalFmt(x.p90_pct, 1) + "%" })
+      ]);
+    });
+    var filhos = [
+      h("h3", { text: "Projeção por cenários" }),
+      h("table", { class: "proj" }, [
+        h("thead", null, [h("tr", null, [h("th", { text: "Horizonte" }), h("th", { text: "Adverso" }), h("th", { text: "Mediano" }), h("th", { text: "Favorável" })])]),
+        h("tbody", null, linhas)
+      ]),
+      h("p", { class: "note", text: "Faixas reais deste papel nos últimos " + p.janela + " pregões (percentis 10, 50 e 90 dos retornos). Não é previsão." })
+    ];
+    if (p.base) {
+      filhos.push(h("p", { class: "hist", text:
+        "Com a mesma distância de stop e alvos do plano, entrando em qualquer dia dos últimos " + p.janela +
+        " pregões, este papel chegou ao alvo 1 em " + fmt(p.base.p_alvo1, 0, "%") + " das vezes, ao alvo 2 em " +
+        fmt(p.base.p_alvo2, 0, "%") + " e foi stopado em " + fmt(p.base.p_stop, 0, "%") + " (até " +
+        p.base.horizonte + " pregões). É a frequência de base, sem o filtro do setup." }));
+    }
+    return h("div", null, filhos);
+  }
+
+  /* ---------- termômetro do mercado ---------- */
+  var FASES = {
+    "TENDÊNCIA SAUDÁVEL": { tom: "good", dica: "Amplitude forte: a lista de pullbacks em tendência de alta tende a funcionar melhor." },
+    "REVERSÃO EM CURSO": { tom: "good", dica: "Mais ações confirmando virada. Priorize a lista Reversão e mantenha stop curto." },
+    "FUNDO EM FORMAÇÃO": { tom: "wait", dica: "Sinais de fundo, ainda sem confirmação ampla. Acompanhe a lista Reversão, sem pressa." },
+    "QUEDA ABERTA": { tom: "bad", dica: "Ainda sem fundo. Prefira Líderes de força relativa e posição menor." },
+    "NEUTRO": { tom: "ok", dica: "Sem direção clara de amplitude." }
+  };
+  var COR_EST = { "SEM QUEDA": "var(--line)", "RECUPERADA": "var(--ok)", "EM QUEDA": "var(--bad)", "CAPITULAÇÃO": "var(--c-e200)",
+                  "ESTABILIZANDO": "var(--wait)", "CONFIRMANDO": "var(--accent)", "CONFIRMADA": "var(--good)" };
+
+  function renderTermometro(t) {
+    var box = $("termo");
+    box.textContent = "";
+    if (!t) { box.hidden = true; return; }
+    var info = FASES[t.fase] || { tom: "ok", dica: "" };
+    box.appendChild(h("div", { class: "regime-top" }, [
+      h("div", null, [
+        h("div", { class: "regime-name", text: "Termômetro: " + cap(t.fase) }),
+        h("div", { class: "regime-meta", text: info.dica })
+      ]),
+      h("span", { class: "pill t-" + info.tom, text: t.fase })
+    ]));
+    box.appendChild(h("div", { class: "plan", style: "margin-top:10px" }, [
+      caixa("Acima da EMA50", fmt(t.acima_ema50, 0, "%"), t.delta_5d >= 0 ? "pos" : "neg", sinalFmt(t.delta_5d, 0) + " p.p. em 5 pregões"),
+      caixa("Acima da EMA200", fmt(t.acima_ema200, 0, "%")),
+      caixa("Mín. x máx. 20d", t.novas_minimas + " x " + t.novas_maximas),
+      caixa("RSI < 30", fmt(t.sobrevendidas, 0, "%"))
+    ]));
+    var ordem = ["EM QUEDA", "CAPITULAÇÃO", "ESTABILIZANDO", "CONFIRMANDO", "CONFIRMADA", "RECUPERADA", "SEM QUEDA"];
+    var total = ordem.reduce(function (acc, k) { return acc + (t.estagios[k] || 0); }, 0) || 1;
+    box.appendChild(h("div", { class: "fases", role: "img", "aria-label": "Distribuição das ações por estágio de reversão" },
+      ordem.filter(function (k) { return t.estagios[k]; }).map(function (k) {
+        return h("i", { style: "width:" + (t.estagios[k] / total * 100) + "%;background:" + COR_EST[k], title: cap(k) + ": " + t.estagios[k] });
+      })));
+    box.appendChild(h("div", { class: "fases-leg" }, ordem.filter(function (k) { return t.estagios[k]; }).map(function (k) {
+      return h("span", null, [h("i", { style: "background:" + COR_EST[k] }), cap(k) + " " + t.estagios[k]]);
+    })));
+    var det = [h("summary", { text: "Como ler o termômetro" }),
+      h("ul", null, (t.leitura || []).map(function (x) { return h("li", null, [h("span", { text: x })]); }))];
+    if (t.ibov && t.ibov.sinais && t.ibov.sinais.length) {
+      det.push(h("h4", { text: "Ibovespa em três etapas" }));
+      det.push(listaSinais(t.ibov.sinais));
+    }
+    box.appendChild(h("details", null, det));
+    box.hidden = false;
+  }
+
+  function temPullback(a) {
+    return !!a.estagio && ["SEM PULLBACK", "ROMPEU"].indexOf(a.estagio) === -1;
+  }
+  function emReversaoNoCartao(a) {
+    return !!a.rev && RADAR.indexOf(a.rev.estagio) !== -1 && !a.oportunidade;
+  }
+
   function corpo(a) {
     return h("div", { class: "detail" }, [
       h("div", { class: "triple" }, [
@@ -517,7 +703,12 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
       ]),
       renderGrafico(a.grafico, a),
       blocoPlano(a),
-      blocoPullback(a),
+      blocoProjecao(a),
+      blocoLider(a),
+      emReversaoNoCartao(a) ? blocoReversao(a) : null,
+      temPullback(a) ? blocoPullback(a) : null,
+      temPullback(a) ? blocoChecklist(a) : null,
+      emReversaoNoCartao(a) ? null : blocoReversao(a),
       h("div", null, [h("h3", { text: "Técnica" }), h("dl", null, [
         par("RSI", fmt(a.rsi, 1) + (a.rsi_status ? " · " + a.rsi_status.toLowerCase() : "")),
         par("MACD", (a.macd_status || "—").toLowerCase()),
@@ -540,6 +731,7 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
       ])]),
       h("details", { class: "why" }, [
         h("summary", { text: "Por que esse score" }),
+        lista(a.reversao ? "Por que é reversão" : "Reversão", a.rev_notas),
         lista("Pullback", a.pb_motivos),
         lista(a.oportunidade ? "Por que é oportunidade" : "O que falta para ser oportunidade", a.op_notas),
         lista("Técnica", a.motivos),
@@ -558,6 +750,9 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
         h("span", { class: "pill t-" + s.tom, text: s.rotulo }),
         a.oportunidade ? h("span", { class: "pill t-op", text: "Oportunidade" }) : null,
         a.novo_hoje ? h("span", { class: "pill t-new", text: "Novo hoje" }) : null,
+        a.reversao ? h("span", { class: "pill t-rev", text: "Reversão confirmada" }) : null,
+        (!a.reversao && a.rev && RADAR.indexOf(a.rev.estagio) !== -1) ? h("span", { class: "pill t-lid", text: "Radar: " + a.rev.estagio.toLowerCase() }) : null,
+        (a.lider && a.lider.ok) ? h("span", { class: "pill t-lid", text: "Líder de força" }) : null,
         estado.citadas[a.acao] ? h("span", { class: "pill t-cit", text: "Citada no Morning Call" }) : null
       ]),
       h("div", { class: "sub num", text: subtitulo(a) }),
@@ -605,9 +800,12 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     $("count").textContent = itens.length + " de " + estado.dados.acoes.length + " ações";
     var msg = $("msg");
     msg.hidden = itens.length > 0;
-    if (!itens.length) msg.textContent = estado.filtro === "oportunidades"
-      ? "Nenhuma oportunidade de pullback hoje. O filtro é rigoroso de propósito; veja “Todos” para acompanhar as ações em correção."
-      : "Nenhuma ação com esse filtro.";
+    var vazios = {
+      "oportunidades": "Nenhuma oportunidade de pullback hoje. O filtro é rigoroso de propósito; veja “Reversão” e “Líderes” ou “Todos”.",
+      "reversao": "Nenhuma ação com fundo se formando hoje. Isso é normal enquanto a queda segue aberta.",
+      "lideres": "Nenhuma ação está segurando preço contra o Ibovespa com os critérios atuais."
+    };
+    if (!itens.length) msg.textContent = vazios[estado.filtro] || "Nenhuma ação com esse filtro.";
   }
 
   function renderChips() {
@@ -625,13 +823,18 @@ footer { color: var(--ink2); font-size: 0.78rem; line-height: 1.5; border-top: 1
     estado.dados = d;
     $("stamp").textContent = "Pregão de " + dataBR(d.data_pregao);
     $("stamp").title = "Gerado em " + d.gerado_em;
+    d.acoes.forEach(function (a) {
+      a.rev_score = a.rev ? a.rev.score : null;
+      a.lider_score = a.lider ? a.lider.score : null;
+    });
     renderRegime(d.regime);
+    renderTermometro(d.termometro);
     $("controls").hidden = false;
     iniciarMC();
-    if (d.acoes.some(function (a) { return a.oportunidade; })) {
-      estado.filtro = "oportunidades";
-      estado.ordem = "op_score";
-      $("ordem").value = "op_score";
+    if (d.modo && d.modo.filtro && FILTROS.some(function (f) { return f.id === d.modo.filtro; })) {
+      estado.filtro = d.modo.filtro;
+      estado.ordem = d.modo.ordem || "score";
+      $("ordem").value = estado.ordem;
     }
     renderChips();
     renderLista();
